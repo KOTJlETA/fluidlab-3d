@@ -1,0 +1,13 @@
+# ОС
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# редакторы
+.vscode/
+.idea/
+*.swp
+
+# временное
+*.log
+__pycache__/

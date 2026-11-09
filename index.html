@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>FluidLab 3D — симуляция жидкости в реальном времени</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div class="ltitle">FluidLab 3D</div>
+  <div class="lsub">инициализация GPU-решателя…</div>
+</div>
+
+<div id="panel">
+  <header>
+    <div class="brand">
+      <div class="logo"></div>
+      <div>
+        <h1>FLUID<span>LAB</span></h1>
+        <div class="tag">Position Based Fluids · GPU</div>
+      </div>
+    </div>
+    <button id="collapse" title="Свернуть панель">‹</button>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b id="s-fps">–</b><span>FPS</span></div>
+    <div class="stat"><b id="s-part">–</b><span>частиц</span></div>
+    <div class="stat"><b id="s-ms">–</b><span>мс</span></div>
+  </div>
+
+  <div class="scroll">
+    <section>
+      <h2>Источники</h2>
+      <div id="sources"></div>
+    </section>
+
+    <section>
+      <h2>Физика</h2>
+      <div id="phys"></div>
+    </section>
+
+    <section>
+      <h2>Жидкости</h2>
+      <div id="fluids"></div>
+    </section>
+
+    <section>
+      <h2>Сцена</h2>
+      <div class="btnrow">
+        <button class="btn" id="btn-obst-sphere">+ Сфера</button>
+        <button class="btn" id="btn-obst-box">+ Куб</button>
+      </div>
+      <div class="btnrow">
+        <button class="btn" id="btn-obst-clear">Убрать препятствия</button>
+      </div>
+      <div class="btnrow">
+        <button class="btn primary" id="btn-reset">Сброс</button>
+        <button class="btn" id="btn-pause">Пауза</button>
+      </div>
+      <div class="btnrow">
+        <button class="btn" id="btn-rotate">Авто-вращение</button>
+        <button class="btn" id="btn-preset">Водоворот</button>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <span>ЛКМ — орбита · КОЛЕСО — зум</span>
+    <span>ПКМ / Shift — толкать жидкость</span>
+  </footer>
+</div>
+
+<button id="expand" title="Показать панель">›</button>
+
+<div id="hint">Потяните мышью, чтобы вращать камеру</div>
+
+<div id="error" hidden></div>
+
+<script src="js/math.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/shaders.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

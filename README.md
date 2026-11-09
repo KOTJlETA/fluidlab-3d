@@ -4,6 +4,8 @@
 Физика — **Position Based Fluids (PBF)** на GPU, рендер — экранно-пространственная
 реконструкция поверхности (Screen Space Fluid Rendering).
 
+**Живая демонстрация:** <https://kotjleta.github.io/fluidlab-3d/>
+
 ![preview](preview.png)
 
 ---

@@ -762,6 +762,9 @@ void main() {
   col += vec3(1.0) * sp * (0.14 + 0.42 * fres);
   col += fluidCol * smoothstep(0.55, 1.0, fluidCol.r) * 0.45 * alpha;
 
+  // мягкое сжатие пересветов: лава остаётся оранжевой, а не белой
+  col = col / (1.0 + max(col.r, max(col.g, col.b)) * 0.34);
+
   vec3 outc = mix(sceneCol, col, alpha);
   // дизеринг убирает полосы 8-битного квантования на плавных градиентах
   float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));

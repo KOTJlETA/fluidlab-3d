@@ -42,6 +42,13 @@ uniform float uConeR0;
 uniform float uConeR1;
 uniform float uConeH;
 
+uniform sampler2D uCityTex;   // RGBA32F: (hx, hy, hz, занят)
+uniform vec3 uCityOrigin;     // мировой угол тайла (0,0)
+uniform float uCityCell;
+uniform float uCityN;
+uniform float uCityFloorY;
+uniform int uCityOn;
+
 uniform vec4 uSph[16];
 uniform int uSphCount;
 uniform vec4 uObsBox[40];    // xyz центр, w = поворот вокруг Y
@@ -70,6 +77,30 @@ vec3 pushOut(vec3 p, out vec3 nrm) {
     }
   } else {
     if (p.y < uBoxMin.y + r) { p.y = uBoxMin.y + r; nrm = vec3(0.0, 1.0, 0.0); }
+  }
+
+  // город: каждая клетка между дорогами — одно здание
+  if (uCityOn == 1) {
+    vec2 g = (p.xz - uCityOrigin.xz) / uCityCell;
+    ivec2 c = ivec2(floor(g));
+    if (c.x >= 0 && c.y >= 0 && c.x < int(uCityN) && c.y < int(uCityN)) {
+      vec4 t = texelFetch(uCityTex, c, 0);
+      if (t.w > 0.5) {
+        vec2 ctr = uCityOrigin.xz + (vec2(c) + 0.5) * uCityCell;
+        vec3 h = vec3(t.x, t.y, t.z) + r;
+        vec3 q = p - vec3(ctr.x, uCityFloorY + t.y, ctr.y);
+        vec3 d = h - abs(q);
+        if (d.x > 0.0 && d.y > 0.0 && d.z > 0.0) {
+          if (d.y <= d.x && d.y <= d.z) {
+            p.y += sign(q.y) * d.y; nrm = vec3(0.0, sign(q.y), 0.0);
+          } else if (d.x <= d.z) {
+            p.x += sign(q.x) * d.x; nrm = vec3(sign(q.x), 0.0, 0.0);
+          } else {
+            p.z += sign(q.z) * d.z; nrm = vec3(0.0, 0.0, sign(q.z));
+          }
+        }
+      }
+    }
   }
 
   // усечённый конус (вулкан): частица скользит по внешней поверхности,
@@ -738,6 +769,80 @@ void main() {
   fragColor = vec4(outc, 1.0);
 }`;
 
+  /* ---------- здания: один инстанс = одно здание ---------- */
+
+  SH.bldVS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 aPos;     // мировые координаты (уже собраны)
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec3 aColor;
+layout(location = 3) in vec3 aLocal;   // локальные -1..1 для сетки окон
+layout(location = 4) in vec4 aParams;  // seed, ряды, колонки X, колонки Z
+uniform mat4 uMVP;
+out vec3 vN;
+out vec3 vW;
+out vec3 vC;
+out vec3 vLocal;
+out vec4 vP;
+
+void main() {
+  vN = aNormal;
+  vW = aPos;
+  vC = aColor;
+  vLocal = aLocal;
+  vP = aParams;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+
+  SH.bldFS = `#version 300 es
+precision highp float;
+in vec3 vN;
+in vec3 vW;
+in vec3 vC;
+in vec3 vLocal;
+in vec4 vP;          // rows, colsX, colsZ, seed
+uniform vec3 uLightDir;
+uniform vec3 uCamPos;
+out vec4 oOut;
+
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+void main() {
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCamPos - vW);
+  if (dot(N, V) < 0.0) N = -N;
+
+  float diff = clamp(dot(N, uLightDir) * 0.5 + 0.5, 0.0, 1.0);
+  vec3 H = normalize(uLightDir + V);
+  float spec = pow(clamp(dot(N, H), 0.0, 1.0), 64.0);
+  float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 3.0);
+
+  vec3 col = vC * (0.22 + 0.85 * diff);
+  col += vec3(1.0) * spec * 0.45;
+  col += vec3(0.25, 0.65, 1.0) * rim * 0.35;
+
+  // затемнение к основанию
+  col *= mix(0.32, 1.0, smoothstep(-1.0, 0.35, vLocal.y));
+
+  // окна только на боковых гранях; для оси Z — по X, для оси X — по Z
+  float side = max(step(0.55, abs(N.x)), step(0.55, abs(N.z)));
+  float u = abs(N.z) > 0.5 ? vLocal.x : vLocal.z;
+  vec2 cell = abs(N.z) > 0.5 ? vec2(vP.z, vP.x) : vec2(vP.y, vP.x);
+  vec2 q = vec2(u, vLocal.y) * 0.5 + 0.5;
+  vec2 g = fract(q * cell) - 0.5;
+  float win = step(0.24, abs(g.x)) * step(0.26, abs(g.y));
+  float lit = hash21(floor(q * cell) * 1.7 + vP.w);
+  float on = step(0.34, lit);
+  vec3 winCol = mix(vec3(0.055, 0.07, 0.10), vec3(1.0, 0.86, 0.58) * (0.55 + 0.75 * on), on);
+  col = mix(col, winCol, win * side * 0.95);
+
+  oOut = vec4(col, 1.0);
+}`;
+
   /* ---------- сцена ---------- */
 
   SH.sceneVS = `#version 300 es
@@ -814,6 +919,17 @@ void main() {
     col = mix(col, winCol, win * side * 0.95);
   } else if (uStyle == 2) {
     col = base * (0.55 + 1.1 * rim);
+  } else if (uStyle == 3) {
+    // землянисто-каменистый склон: слоистая порода, серые и бурые разводы
+    float n1 = hash21(floor(vW.xz * 3.4) + floor(vW.y * 9.0) * 0.37);
+    float n2 = hash21(floor(vW.xz * 11.0) + floor(vW.y * 26.0));
+    float strata = 0.5 + 0.5 * sin(vW.y * 7.5 + n1 * 6.0);
+    vec3 rock = mix(vec3(0.115, 0.095, 0.080), vec3(0.235, 0.205, 0.180), n1);
+    rock = mix(rock, vec3(0.205, 0.205, 0.215), strata * 0.35);
+    rock *= 0.82 + 0.30 * n2;
+    col = rock * (0.42 + 0.95 * diff);
+    col += vec3(1.0) * spec * 0.10;
+    col += vec3(0.30, 0.62, 0.95) * rim * 0.16;
   }
 
   col += base * uEmissive;
@@ -932,6 +1048,7 @@ uniform vec3 uColor;
 uniform float uGridFade;
 uniform int uFloorStyle;
 uniform float uBlock;
+uniform float uIslandR;
 out vec4 oOut;
 
 float gridLine(vec2 p, float s) {
@@ -979,6 +1096,26 @@ void main() {
 
     base = ground * (0.45 + 0.85 * diff);
     base += vec3(0.10, 0.35, 0.45) * gridLine(vW.xz, blk) * 0.05 * fade;
+  } else if (uFloorStyle == 4) {
+    /* остров: трава, у кромки — песок */
+    float r = length(vW.xz);
+    float R = max(0.5, uIslandR);
+    float n1 = fract(sin(dot(floor(vW.xz * 42.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float n2 = fract(sin(dot(floor(vW.xz * 9.0), vec2(4.898, 7.23))) * 24634.6345);
+    float n3 = fract(sin(dot(floor(vW.xz * 160.0), vec2(31.7, 17.3))) * 9173.1234);
+
+    vec3 grass = mix(vec3(0.055, 0.155, 0.050), vec3(0.135, 0.285, 0.085), n1 * 0.55 + n2 * 0.45);
+    grass = mix(grass, vec3(0.085, 0.215, 0.065), n3 * 0.35);
+    grass *= 0.90 + 0.20 * n1;
+
+    vec3 sand = mix(vec3(0.52, 0.44, 0.30), vec3(0.66, 0.58, 0.42), n1);
+    float shore = smoothstep(R * 0.74, R * 0.96, r);
+    vec3 ground = mix(grass, sand, shore);
+    // мокрый песок у самой воды
+    ground = mix(ground, vec3(0.34, 0.30, 0.22), smoothstep(R * 0.94, R * 1.02, r) * 0.7);
+
+    base = ground * (0.55 + 0.75 * diff);
+    base *= 1.0 - 0.45 * smoothstep(R, R * 1.22, r);
   } else if (uFloorStyle == 3) {
     /* снежный шар: снег с мягкими сугробами */
     float n = 0.5 + 0.5 * sin(vW.x * 3.1 + 1.3) * sin(vW.z * 2.7 - 0.7);

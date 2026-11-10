@@ -46,6 +46,7 @@
       glass: GL.program(gl, FS.SH.sceneVS, FS.SH.glassFS, 'glass'),
       field: GL.program(gl, FS.SH.sceneVS, FS.SH.fieldFS, 'field'),
       portal: GL.program(gl, FS.SH.sceneVS, FS.SH.portalFS, 'portal'),
+      bld: GL.program(gl, FS.SH.bldVS, FS.SH.bldFS, 'bld'),
       clear: GL.program(gl, FS.SH.fullscreenVS, FS.SH.clearFS, 'clear')
     };
 
@@ -94,6 +95,34 @@
           cz + n[2] * hz + t[2] * cc[0] * hz + b[2] * cc[1] * hz
         );
         nor.push(n[0], n[1], n[2]);
+        col.push(c[0], c[1], c[2]);
+      });
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    });
+  }
+
+  // бокс, повёрнутый вокруг Y (для створок пальмы)
+  function pushBoxRot(pos, nor, col, idx, cx, cy, cz, hx, hy, hz, yaw, c) {
+    var ca = Math.cos(yaw), sa = Math.sin(yaw);
+    var faces = [
+      [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      [[-1, 0, 0], [0, 1, 0], [0, 0, -1]],
+      [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
+      [[0, -1, 0], [0, 0, -1], [1, 0, 0]],
+      [[0, 0, 1], [0, 1, 0], [-1, 0, 0]],
+      [[0, 0, -1], [0, 1, 0], [1, 0, 0]]
+    ];
+    var corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    faces.forEach(function (f) {
+      var n = f[0], t = f[1], b = f[2];
+      var base = pos.length / 3;
+      var rnx = n[0] * ca + n[2] * sa, rnz = -n[0] * sa + n[2] * ca;
+      corners.forEach(function (cc) {
+        var lx = n[0] * hx + t[0] * cc[0] * hx + b[0] * cc[1] * hx;
+        var ly = n[1] * hy + t[1] * cc[0] * hy + b[1] * cc[1] * hy;
+        var lz = n[2] * hz + t[2] * cc[0] * hz + b[2] * cc[1] * hz;
+        pos.push(cx + lx * ca + lz * sa, cy + ly, cz - lx * sa + lz * ca);
+        nor.push(rnx, n[1], rnz);
         col.push(c[0], c[1], c[2]);
       });
       idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -182,6 +211,61 @@
     }
   }
 
+  /* Собрать все здания в один меш. Пересобирается только при изменении списка. */
+  Renderer.prototype._rebuildBuildings = function (objs) {
+    var gl = this.gl;
+    var n = 0, sig = objs.length * 7919, i;
+    for (i = 0; i < objs.length; i++) {
+      var o = objs[i];
+      if (o.kind !== 'building') continue;
+      n++;
+      sig += (o.pos[0] * 13.1 + o.pos[1] * 7.3 + o.pos[2] * 3.7 + o.size[1] * 101.0);
+    }
+    sig = Math.round(sig * 100) / 100 + ':' + n;
+    if (sig === this.bldSig) return;
+    this.bldSig = sig;
+
+    var tmpl = this.cubeTmpl.inter, tn = tmpl.length / 9;
+    var tidx = this.cubeTmpl.indices;
+    var needV = n * tn * 16, needI = n * tidx.length;
+    if (this.bldBufV.length < needV) this.bldBufV = new Float32Array(needV);
+    if (this.bldBufI.length < needI) this.bldBufI = new Uint32Array(needI);
+    var V = this.bldBufV, I = this.bldBufI;
+
+    var vi = 0, ii = 0, base = 0;
+    for (i = 0; i < objs.length; i++) {
+      var ob = objs[i];
+      if (ob.kind !== 'building') continue;
+      var cx = ob.pos[0], cy = ob.pos[1], cz = ob.pos[2];
+      var hx = ob.size[0], hy = ob.size[1], hz = ob.size[2];
+      var col = ob.color;
+      var rows = Math.min(24, Math.max(2, Math.round(hy * 2 / 0.045)));
+      var cX = Math.min(16, Math.max(2, Math.round(hx * 2 / 0.040)));
+      var cZ = Math.min(16, Math.max(2, Math.round(hz * 2 / 0.040)));
+      var seed = (i * 17) % 97;
+      for (var v = 0; v < tn; v++) {
+        var lx = tmpl[v * 9], ly = tmpl[v * 9 + 1], lz = tmpl[v * 9 + 2];
+        V[vi] = cx + lx * hx; V[vi + 1] = cy + ly * hy; V[vi + 2] = cz + lz * hz;
+        V[vi + 3] = tmpl[v * 9 + 3]; V[vi + 4] = tmpl[v * 9 + 4]; V[vi + 5] = tmpl[v * 9 + 5];
+        V[vi + 6] = col[0]; V[vi + 7] = col[1]; V[vi + 8] = col[2];
+        V[vi + 9] = lx; V[vi + 10] = ly; V[vi + 11] = lz;
+        V[vi + 12] = seed; V[vi + 13] = rows; V[vi + 14] = cX; V[vi + 15] = cZ;
+        vi += 16;
+      }
+      for (var t = 0; t < tidx.length; t++) I[ii++] = base + tidx[t];
+      base += tn;
+    }
+
+    gl.bindVertexArray(this.bldVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bldVB);
+    gl.bufferData(gl.ARRAY_BUFFER, V.subarray(0, vi), gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.bldIB);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, I.subarray(0, ii), gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(null);
+    this.bldVerts = n;
+    this.bldIdx = ii;
+  };
+
   Renderer.prototype._buildGeometry = function () {
     var gl = this.gl;
 
@@ -230,6 +314,56 @@
     pushCone(pt, nt, ct, it, 0, 0.10, 0, 0.62, 0.30, 14, [0.13, 0.48, 0.24]);
     pushCone(pt, nt, ct, it, 0, 0.48, 0, 0.42, 0.28, 12, [0.16, 0.56, 0.28]);
     this.tree = this._uploadMesh(meshData(pt, nt, ct, new Uint16Array(it)));
+
+    // пальма: изогнутый ствол + створки кроны
+    var pp = [], np = [], cp = [], ip = [];
+    var lean = 0.10;
+    for (var seg2 = 0; seg2 < 5; seg2++) {
+      var ty = -0.92 + seg2 * 0.36;
+      var off = lean * (seg2 * seg2) * 0.25;
+      pushBoxRot(pp, np, cp, ip, off, ty, 0, 0.075, 0.19, 0.075,
+        seg2 * 0.05, [0.34, 0.235, 0.145]);
+    }
+    var NF = 7;
+    for (var fr = 0; fr < NF; fr++) {
+      var fyaw = (fr / NF) * Math.PI * 2 + 0.4;
+      var fc = Math.cos(fyaw), fs = Math.sin(fyaw);
+      var g1 = [0.115, 0.375, 0.145];
+      var g2 = [0.085, 0.300, 0.115];
+      pushBoxRot(pp, np, cp, ip, fc * 0.42, 0.86, fs * 0.42, 0.42, 0.028, 0.085, -fyaw, g1);
+      pushBoxRot(pp, np, cp, ip, fc * 1.00, 0.72, fs * 1.00, 0.30, 0.022, 0.062, -fyaw, g2);
+      pushBoxRot(pp, np, cp, ip, fc * 0.20, 0.94, fs * 0.20, 0.20, 0.024, 0.055, -fyaw, g1);
+    }
+    pushBoxRot(pp, np, cp, ip, 0.10, 0.80, 0.05, 0.055, 0.055, 0.055, 0, [0.30, 0.22, 0.10]);
+    pushBoxRot(pp, np, cp, ip, -0.08, 0.76, -0.09, 0.05, 0.05, 0.05, 0, [0.28, 0.20, 0.09]);
+    this.palm = this._uploadMesh(meshData(pp, np, cp, new Uint16Array(ip)));
+
+    // здания: объединённый меш (один draw call на весь город)
+    var bp = [], bn = [], bc = [], bi = [];
+    pushBox(bp, bn, bc, bi, 0, 0, 0, 1, 1, 1, [1, 1, 1]);
+    this.cubeTmpl = meshData(bp, bn, bc, new Uint16Array(bi));
+    this.bldVAO = gl.createVertexArray();
+    gl.bindVertexArray(this.bldVAO);
+    this.bldVB = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bldVB);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 64, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 64, 12);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 64, 24);
+    gl.enableVertexAttribArray(3);
+    gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 64, 36);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 64, 48);
+    this.bldIB = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.bldIB);
+    gl.bindVertexArray(null);
+    this.bldVerts = 0;
+    this.bldIdx = 0;
+    this.bldSig = '';
+    this.bldBufV = new Float32Array(0);
+    this.bldBufI = new Uint32Array(0);
 
     // деревянный домик: сруб + двускатная крыша
     var ph = [], nh = [], ch = [], ih = [];
@@ -521,7 +655,8 @@
       GL.u3f(gl, p, 'uColor', 0.035, 0.045, 0.06);
       GL.u1f(gl, p, 'uGridFade', Math.max(1.0, (level.half || 2) / 2));
       GL.u1i(gl, p, 'uFloorStyle', level.floorStyle || 0);
-      GL.u1f(gl, p, 'uBlock', level.city ? (level.half * 2) / level.cityN : 1.0);
+      GL.u1f(gl, p, 'uBlock', level.city ? level.cell : 1.0);
+      GL.u1f(gl, p, 'uIslandR', (level.half || 2) * 1.02);
       gl.bindVertexArray(this.plane.vao);
       gl.drawElements(gl.TRIANGLES, this.plane.count, gl.UNSIGNED_SHORT, 0);
     }
@@ -538,7 +673,7 @@
       GL.u3f(gl, p, 'uColor', 1, 1, 1);
       GL.u1f(gl, p, 'uAlpha', 1.0);
       GL.u1f(gl, p, 'uEmissive', 0.0);
-      GL.u1i(gl, p, 'uStyle', 0);
+      GL.u1i(gl, p, 'uStyle', 3);
       GL.u1f(gl, p, 'uSeed', 0);
       GL.u2f(gl, p, 'uWinA', 1, 1);
       GL.u2f(gl, p, 'uWinB', 1, 1);
@@ -553,6 +688,24 @@
     GL.u3fv(gl, p, 'uCamPos', cam.eye);
 
     var objs = sim.objects;
+
+    // --- все здания одним вызовом ---
+    this._rebuildBuildings(objs);
+    if (this.bldIdx > 0) {
+      var pb = this.progs.bld;
+      gl.useProgram(pb.program);
+      GL.um4(gl, pb, 'uMVP', vp);
+      GL.u3fv(gl, pb, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, pb, 'uCamPos', cam.eye);
+      gl.bindVertexArray(this.bldVAO);
+      gl.drawElements(gl.TRIANGLES, this.bldIdx, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
+      p = this.progs.scene;
+      gl.useProgram(p.program);
+      GL.u3fv(gl, p, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, p, 'uCamPos', cam.eye);
+    }
+
     for (var i = 0; i < objs.length; i++) {
       var o = objs[i];
       if (o.kind === 'sphere') {
@@ -569,6 +722,34 @@
         gl.bindVertexArray(this.sphere.vao);
         gl.drawElements(gl.TRIANGLES, this.sphere.count, gl.UNSIGNED_SHORT, 0);
       } else if (o.kind === 'building') {
+        continue;   // рисуются инстансно выше
+      } else if (o.kind === 'palm') {
+        var mpa = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[0]);
+        GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mpa));
+        GL.um4(gl, p, 'uModel', mpa);
+        GL.u3f(gl, p, 'uColor', 1, 1, 1);
+        GL.u1f(gl, p, 'uAlpha', 1.0);
+        GL.u1f(gl, p, 'uEmissive', 0.0);
+        GL.u1i(gl, p, 'uStyle', 0);
+        GL.u1f(gl, p, 'uSeed', 0);
+        GL.u2f(gl, p, 'uWinA', 1, 1);
+        GL.u2f(gl, p, 'uWinB', 1, 1);
+        gl.bindVertexArray(this.palm.vao);
+        gl.drawElements(gl.TRIANGLES, this.palm.count, gl.UNSIGNED_SHORT, 0);
+      } else if (o.kind === 'rock') {
+        var mrk = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[2]);
+        GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mrk));
+        GL.um4(gl, p, 'uModel', mrk);
+        GL.u3fv(gl, p, 'uColor', o.color);
+        GL.u1f(gl, p, 'uAlpha', 1.0);
+        GL.u1f(gl, p, 'uEmissive', 0.0);
+        GL.u1i(gl, p, 'uStyle', 2);
+        GL.u1f(gl, p, 'uSeed', 0);
+        GL.u2f(gl, p, 'uWinA', 1, 1);
+        GL.u2f(gl, p, 'uWinB', 1, 1);
+        gl.bindVertexArray(this.sphere.vao);
+        gl.drawElements(gl.TRIANGLES, this.sphere.count, gl.UNSIGNED_SHORT, 0);
+      } else if (o.kind === 'buildingOLD') {
         var mb = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[2]);
         GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mb));
         GL.um4(gl, p, 'uModel', mb);

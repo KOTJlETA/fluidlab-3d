@@ -487,6 +487,49 @@
     this._flushSpawns();
   };
 
+  /* Сетка соседей следует за облаком жидкости: клетка не мельче h, но и не
+     раздувается на всю арену — иначе перебор соседей становится квадратичным. */
+  FluidSim.prototype.refitGrid = function () {
+    var p = this.posCPU, n = this.N;
+    var mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9, cnt = 0;
+    for (var i = 0; i < n; i++) {
+      if (!this.alive[i]) continue;
+      var y = p[i * 4 + 1];
+      if (y < -500) continue;
+      var x = p[i * 4], z = p[i * 4 + 2];
+      if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+      if (y < mny) mny = y; if (y > mxy) mxy = y;
+      if (z < mnz) mnz = z; if (z > mxz) mxz = z;
+      cnt++;
+    }
+    if (cnt < 8) return;
+
+    var h = this.h, pad = 3 * h;
+    var ex = Math.max(mxx - mnx + 2 * pad, 10 * h);
+    var ey = Math.max(mxy - mny + 2 * pad, 8 * h);
+    var ez = Math.max(mxz - mnz + 2 * pad, 10 * h);
+    var cs = Math.max(h, ex / 48, ey / 22, ez / 48);
+
+    var inside = this.gridMin &&
+      mnx > this.gridMin[0] && mxx < this.gridMin[0] + this.GX * this.cellSize &&
+      mnz > this.gridMin[2] && mxz < this.gridMin[2] + this.GZ * this.cellSize;
+    var need = !inside || cs > this.cellSize * 1.30 || cs < this.cellSize * 0.58;
+    if (!need) return;
+
+    this.cellSize = cs;
+    this.GX = Math.min(48, Math.max(8, Math.ceil(ex / cs)));
+    this.GY = Math.min(22, Math.max(6, Math.ceil(ey / cs)));
+    this.GZ = Math.min(48, Math.max(8, Math.ceil(ez / cs)));
+    var cx = (mnx + mxx) * 0.5, cy = (mny + mxy) * 0.5, cz = (mnz + mxz) * 0.5;
+    this.gridMin = [
+      cx - this.GX * cs * 0.5,
+      cy - this.GY * cs * 0.5,
+      cz - this.GZ * cs * 0.5
+    ];
+    this.gridCells = this.GX * this.GY * this.GZ;
+    this._allocGrid();
+  };
+
   FluidSim.prototype.buildGrid = function () {
     var N = this.N, GX = this.GX, GY = this.GY, GZ = this.GZ;
     var gmin = this.gridMin, cs = this.cellSize;
@@ -637,6 +680,23 @@
       GL.u1f(gl, p, 'uConeOn', 0);
     }
 
+    // город: сетка кварталов текстурой (n x n, RGBA32F)
+    if (L.city && L.tiles) {
+      if (!this.cityTex || this.cityN !== L.cityN) {
+        if (this.cityTex) gl.deleteTexture(this.cityTex);
+        this.cityTex = GL.texture(gl, L.cityN, L.cityN, gl.RGBA32F, gl.RGBA, gl.FLOAT, L.tiles, gl.NEAREST);
+        this.cityN = L.cityN;
+      }
+      GL.bindTex(gl, p, 'uCityTex', this.cityTex, 6);
+      GL.u1i(gl, p, 'uCityOn', 1);
+      GL.u3f(gl, p, 'uCityOrigin', L.min[0], 0, L.min[2]);
+      GL.u1f(gl, p, 'uCityCell', L.cell);
+      GL.u1f(gl, p, 'uCityN', L.cityN);
+      GL.u1f(gl, p, 'uCityFloorY', L.floorY);
+    } else {
+      GL.u1i(gl, p, 'uCityOn', 0);
+    }
+
     GL.u4fv(gl, p, 'uSph', this.uSph);
     GL.u1i(gl, p, 'uSphCount', this.counts.sph);
     GL.u4fv(gl, p, 'uObsBox', this.uBox);
@@ -774,6 +834,7 @@
     this.readback();
     this.killOutOfBounds();
     this.emit(dt);
+    this.refitGrid();
     this.buildGrid();
     this.uploadGrid();
     this.simulate(dt);

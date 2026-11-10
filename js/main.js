@@ -101,12 +101,23 @@
   App.setLang = function (lang) {
     FS.I18N.set(lang);
     FS.I18N.applyStatic();
+    syncLangToggle();
     App.refreshAll();
     FS.UI.buildModes(document.getElementById('modes'), App);
     FS.UI.buildLanguages(document.getElementById('langs'), App);
     FS.UI.buildScenarios(document.getElementById('scenarios'), App);
     App.changed();
   };
+
+  function syncLangToggle() {
+    var host = document.getElementById('langtoggle');
+    if (!host) return;
+    var cur = FS.I18N.lang;
+    Array.prototype.forEach.call(host.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-lang') === cur);
+    });
+  }
+  App.syncLangToggle = syncLangToggle;
 
   App.select = function (kind, id) {
     if (kind === null) App.selected = null;
@@ -165,6 +176,10 @@
   }
 
   App.setLevel = function (key) {
+    // список сценариев зависит от уровня — перестраиваем сразу
+    setTimeout(function () {
+      FS.UI.buildScenarios(document.getElementById('scenarios'), App);
+    }, 0);
     if (!World.LEVELS[key]) return;
     var L = World.LEVELS[key];
     if (L.camDist) cam.dist = L.camDist;
@@ -474,6 +489,17 @@
       }
       if (e.key === 'Escape') App.select(null);
     });
+
+    var lt = document.getElementById('langtoggle');
+    if (lt) {
+      lt.addEventListener('click', function (e) {
+        var b = e.target.closest('button');
+        if (!b) return;
+        var l = b.getAttribute('data-lang');
+        if (l && l !== FS.I18N.lang) App.setLang(l);
+      });
+    }
+    syncLangToggle();
 
     document.getElementById('collapse').addEventListener('click', function () {
       document.getElementById('panel').classList.add('collapsed');

@@ -239,13 +239,15 @@
       var d = Math.hypot(dx, dy, dz);
       return d > L.radius + 0.35 || y < L.center[1] - L.radius - 0.35;
     }
+    // по высоте ограничений нет: источник может стоять над уровнем (ливень),
+    // отсекаем только то, что ушло глубоко под пол или за край арены
     if (L.kind === 'none') {
       var lim = L.half * 1.78;
-      return y < L.min[1] - 1.0 * (this.scale || 1) ||
+      return y < L.min[1] - 3.0 * (this.scale || 1) ||
              Math.abs(x) > lim || Math.abs(z) > lim;
     }
     var s = this.scale || 1;
-    return y < L.min[1] - 0.45 * s || y > (L.wallTop || L.max[1]) + 1.2 * s ||
+    return y < L.min[1] - 3.0 * s ||
            Math.abs(x) > L.max[0] + 0.45 * s || Math.abs(z) > L.max[2] + 0.45 * s;
   };
 

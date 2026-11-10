@@ -16,7 +16,8 @@
     { key: 'slime', css: '#33d961', fluid: true, spacing: 0.086, visc: 0.85, buoy: 0.0, grav: 1.0, drag: 0.0 },
     { key: 'snow', css: '#eef4ff', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.12, drag: 3.4 },
     { key: 'sand', css: '#d9c48a', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.95, drag: 0.7 },
-    { key: 'dust', css: '#b9b2a6', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.10, drag: 3.2 }
+    { key: 'dust', css: '#b9b2a6', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.10, drag: 3.2 },
+    { key: 'rain', css: '#8fb6d8', fluid: true, spacing: 0.075, visc: 0.04, buoy: 0.0, grav: 1.0, drag: 0.0, rad: 0.20 }
   ];
   World.typeName = function (i) { return T('type.' + World.TYPES[i].key); };
 
@@ -89,13 +90,9 @@
       sky: 'xmas', camK: 2.9, frac: 0.0
     }),
     volcano: mkLevel({
-      key: 'volcano', kind: 'none', scale: 2.4, half: 5.4, floorStyle: 4,
-      sky: 'day', camK: 2.15, island: true, frac: 0.0,
-      cone: { r0: 2.6, r1: 0.62, h: 3.9 }
-    }),
-    open: mkLevel({
-      key: 'open', kind: 'none', scale: 1.5, half: 3.0, floorStyle: 4,
-      sky: 'sunset', camK: 2.2
+      key: 'volcano', kind: 'none', scale: 2.0, half: 17.0, floorStyle: 5,
+      sky: 'day', camK: 1.38, island: true, frac: 0.0, terrain: true,
+      cone: { r0: 5.4, r1: 1.55, h: 6.6 }
     }),
     portal: mkLevel({
       key: 'portal', kind: 'box', scale: 0.55, half: 2.0, floorStyle: 0,
@@ -341,6 +338,96 @@
     return out;
   };
 
+  /* ---------------- рельеф острова ---------------- */
+
+  function hash2(x, y) {
+    var s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  function vnoise(x, y) {
+    var xi = Math.floor(x), yi = Math.floor(y);
+    var xf = x - xi, yf = y - yi;
+    var u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    var a = hash2(xi, yi), b = hash2(xi + 1, yi);
+    var c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+    return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+  }
+  function fbm(x, y, oct) {
+    var s = 0, a = 0.5, f = 1;
+    for (var i = 0; i < oct; i++) { s += a * vnoise(x * f, y * f); f *= 2.03; a *= 0.5; }
+    return s;
+  }
+  function sstep(a, b, x) {
+    var t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  }
+
+  /* Высота рельефа в точке (от уровня пола) */
+  World.volcanoHeight = function (x, z, half) {
+    var R = half, r = Math.hypot(x, z), rn = r / R;
+    var island = 1 - sstep(0.78, 1.0, rn);
+    var hills = (fbm(x * 0.085 + 11, z * 0.085 - 4, 4) - 0.5) * 2.0;
+    var h = island * (0.42 + hills * 0.9);
+
+    // горные гребни
+    var ridge = 1 - Math.abs(fbm(x * 0.055 - 2, z * 0.055 + 5, 4) * 2 - 1);
+    h += Math.pow(ridge, 3) * 2.6 * island;
+
+    // промоины и овраги на равнине
+    var rv = Math.abs(fbm(x * 0.048 + 3.1, z * 0.048 + 7.7, 3) - 0.5);
+    h -= Math.pow(1 - Math.min(1, rv * 7), 3) * 1.15 * island;
+
+    // вулкан: усечённый конус с чашей кратера
+    var R0 = 5.4, R1 = 1.55, H = 6.6;
+    if (r < R0) {
+      if (r < R1) {
+        h += H * (0.40 + 0.60 * Math.pow(r / R1, 1.7));
+      } else {
+        var t = (r - R1) / (R0 - R1);
+        h += H * Math.pow(1 - t, 1.30);
+      }
+      // радиальные расщелины по склону
+      var ang = Math.atan2(z, x);
+      var g = Math.pow(Math.max(0, Math.cos(ang * 9.0 + 0.6)), 5.0);
+      var gs = Math.min(1, Math.max(0, (r - R1) / (R0 - R1)));
+      h -= g * 1.45 * gs;
+      // мелкая шероховатость склона
+      h += (fbm(x * 0.9, z * 0.9, 2) - 0.5) * 0.28 * gs;
+    }
+    return h;
+  };
+
+  World.buildTerrain = function (L) {
+    var n = 128, half = L.half;
+    var t = { n: n, half: half, h: new Float32Array(n * n) };
+    for (var j = 0; j < n; j++) {
+      for (var i = 0; i < n; i++) {
+        var x = -half + (i + 0.5) / n * (2 * half);
+        var z = -half + (j + 0.5) / n * (2 * half);
+        t.h[j * n + i] = World.volcanoHeight(x, z, half);
+      }
+    }
+    L.terrain = t;
+    return t;
+  };
+
+  World.terrainHeight = function (L, x, z) {
+    var t = L.terrain;
+    if (!t) return 0;
+    var n = t.n, half = t.half;
+    var fx = (x + half) / (2 * half) * n - 0.5;
+    var fz = (z + half) / (2 * half) * n - 0.5;
+    var i0 = Math.floor(fx), j0 = Math.floor(fz);
+    var tx = fx - i0, tz = fz - j0;
+    var g = function (i, j) {
+      if (i < 0) i = 0; else if (i >= n) i = n - 1;
+      if (j < 0) j = 0; else if (j >= n) j = n - 1;
+      return t.h[j * n + i];
+    };
+    return (g(i0, j0) * (1 - tx) + g(i0 + 1, j0) * tx) * (1 - tz) +
+           (g(i0, j0 + 1) * (1 - tx) + g(i0 + 1, j0 + 1) * tx) * tz;
+  };
+
   /* ---------------- тропический остров с вулканом ---------------- */
 
   World.volcanoObjects = function (L) {
@@ -348,50 +435,62 @@
     var s = L.scale;
     var y = L.floorY;
     var H = L.half;
+    var R0 = L.cone.r0;
     var out = [];
 
-    var NR = 18;
-    for (var i = 0; i < NR; i++) {
-      var a = (i / NR) * Math.PI * 2 + World.rr(-0.14, 0.14);
-      var rad = L.cone.r0 * World.rr(1.02, 1.55);
-      if (rad > H * 0.92) continue;
-      var rr = World.rr(0.10, 0.26) * s * 0.55;
-      out.push(World.rock(
-        [Math.cos(a) * rad, y + rr * 0.45, Math.sin(a) * rad], rr,
-        [World.rr(0.36, 0.48), World.rr(0.36, 0.48), World.rr(0.38, 0.50)]
-      ));
+    function ground(x, z) { return y + World.terrainHeight(L, x, z); }
+
+    // камни у подножия и по склонам
+    for (var i = 0; i < 26; i++) {
+      var a = (i / 26) * Math.PI * 2 + World.rr(-0.16, 0.16);
+      var rad = R0 * World.rr(0.92, 1.65);
+      var px = Math.cos(a) * rad, pz = Math.sin(a) * rad;
+      var rr = World.rr(0.10, 0.30);
+      out.push(World.rock([px, ground(px, pz) + rr * 0.35, pz], rr,
+        [World.rr(0.36, 0.50), World.rr(0.36, 0.50), World.rr(0.38, 0.52)]));
     }
 
-    var NP = 48;
+    // пальмы по всему острову
+    var NP = 150;
     for (var t = 0; t < NP; t++) {
       var ang = World.rnd() * Math.PI * 2;
-      var dist = Math.sqrt(World.rnd()) * H * 0.93;
-      if (dist < L.cone.r0 * 1.05) continue;
-      var h = World.rr(0.55, 1.15) * s;
-      out.push(World.palm(
-        [Math.cos(ang) * dist, y + h * 0.5, Math.sin(ang) * dist],
-        h, h * 0.26
-      ));
+      var dist = Math.sqrt(World.rnd()) * H * 0.94;
+      if (dist < R0 * 1.02) continue;
+      var px2 = Math.cos(ang) * dist, pz2 = Math.sin(ang) * dist;
+      var gy = World.terrainHeight(L, px2, pz2);
+      if (gy < 0.10) continue;
+      var h = World.rr(0.9, 2.1);
+      out.push(World.palm([px2, y + gy + h * 0.5, pz2], h, h * 0.24));
     }
 
-    var NB = 36;
+    // подлесок: кусты и мелкие камни
+    var NB = 150;
     for (var b = 0; b < NB; b++) {
       var ang2 = World.rnd() * Math.PI * 2;
       var d2 = Math.sqrt(World.rnd()) * H * 0.96;
-      if (d2 < L.cone.r0 * 1.0) continue;
-      if (World.rnd() < 0.5) {
-        var hr = World.rr(0.10, 0.22) * s * 0.5;
-        out.push(World.rock(
-          [Math.cos(ang2) * d2, y + hr * 0.35, Math.sin(ang2) * d2], hr,
-          [World.rr(0.34, 0.46), World.rr(0.34, 0.46), World.rr(0.36, 0.48)]
-        ));
+      if (d2 < R0 * 0.98) continue;
+      var bx = Math.cos(ang2) * d2, bz = Math.sin(ang2) * d2;
+      var gy2 = World.terrainHeight(L, bx, bz);
+      if (gy2 < 0.08) continue;
+      if (World.rnd() < 0.45) {
+        var hr = World.rr(0.09, 0.22);
+        out.push(World.rock([bx, y + gy2 + hr * 0.3, bz], hr,
+          [World.rr(0.34, 0.46), World.rr(0.34, 0.46), World.rr(0.36, 0.48)]));
       } else {
-        var hh = World.rr(0.16, 0.30) * s * 0.5;
-        out.push(World.tree(
-          [Math.cos(ang2) * d2, y + hh * 0.5, Math.sin(ang2) * d2], hh, hh * 0.34,
-          [0.10, 0.34, 0.16]
-        ));
+        var hh = World.rr(0.35, 0.95);
+        out.push(World.tree([bx, y + gy2 + hh * 0.5, bz], hh, hh * 0.32,
+          [0.09, 0.30, 0.13]));
       }
+    }
+
+    // редкие валуны на склоне вулкана
+    for (var k = 0; k < 18; k++) {
+      var ak = World.rnd() * Math.PI * 2;
+      var dk = R0 * World.rr(0.35, 0.95);
+      var kx = Math.cos(ak) * dk, kz = Math.sin(ak) * dk;
+      var kr = World.rr(0.16, 0.34);
+      out.push(World.rock([kx, ground(kx, kz) + kr * 0.3, kz], kr,
+        [World.rr(0.30, 0.42), World.rr(0.30, 0.42), World.rr(0.32, 0.44)]));
     }
     return out;
   };
@@ -444,7 +543,10 @@
       return city.objects;
     }
     if (key === 'sphere') return World.snowObjects(L);
-    if (key === 'volcano') return World.volcanoObjects(L);
+    if (key === 'volcano') {
+      World.buildTerrain(L);
+      return World.volcanoObjects(L);
+    }
     if (key === 'portal') return World.portalObjects(L);
     return World.openObjects(L);
   };
@@ -496,8 +598,9 @@
     /* Ливень: один широкий медленный поток сверху */
     rain: function (L) {
       var top = L.wallTop;
+      // сопло размером во весь уровень: капли падают по всей площади, а не из трубы
       return [
-        src([0, top * 0.96, 0], [0, -1, 0], 0.30, 0.9, 0, 700)
+        src([0, top * 0.94, 0], [0, -1, 0], L.half * 1.06, 0.7, 7, 4200)
       ];
     },
 
@@ -532,18 +635,18 @@
     /* Извержение: лава фонтаном вверх из жерла */
     eruption: function (L) {
       var s = L.scale;
-      var y = L.floorY + L.cone.h;
+      var y = L.floorY + L.cone.h * 0.44;
       return [
-        src([0, y + 0.10 * s, 0], [0, 1, 0], 0.11 * s, 4.6 * s, 2, 1300)
+        src([0, y, 0], [0, 1, 0], 0.22, 6.5, 2, 1500)
       ];
     },
 
     /* Боковой выброс: лава течёт по склону вниз */
     lavaflow: function (L) {
       var s = L.scale;
-      var y = L.floorY + L.cone.h * 0.55;
+      var y = L.floorY + L.cone.h * 0.62;
       return [
-        src([L.cone.r0 * 0.42, y, 0], [0.55, 0.55, 0.2], 0.10 * s, 3.0 * s, 2, 900)
+        src([L.cone.r0 * 0.30, y, 0], [0.75, 0.35, 0.25], 0.18, 2.4, 2, 1100)
       ];
     },
 
@@ -570,8 +673,7 @@
     city_mid: ['flood', 'sewer', 'tsunami', 'rain', 'mix'],
     city_big: ['flood', 'sewer', 'tsunami', 'rain', 'mix'],
     sphere: ['snowfall'],
-    volcano: ['eruption', 'lavaflow'],
-    open: ['river', 'rain', 'mix'],
+    volcano: ['eruption', 'lavaflow', 'rain'],
     portal: ['portaljet']
   };
 

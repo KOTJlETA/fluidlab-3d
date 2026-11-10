@@ -42,6 +42,13 @@ uniform float uConeR0;
 uniform float uConeR1;
 uniform float uConeH;
 
+uniform sampler2D uTerrainTex;
+uniform vec2 uTerrainMin;
+uniform float uTerrainSize;
+uniform float uTerrainN;
+uniform float uTerrainFloorY;
+uniform int uTerrainOn;
+
 uniform sampler2D uCityTex;   // RGBA32F: (hx, hy, hz, занят)
 uniform vec3 uCityOrigin;     // мировой угол тайла (0,0)
 uniform float uCityCell;
@@ -77,6 +84,20 @@ vec3 pushOut(vec3 p, out vec3 nrm) {
     }
   } else {
     if (p.y < uBoxMin.y + r) { p.y = uBoxMin.y + r; nrm = vec3(0.0, 1.0, 0.0); }
+  }
+
+  // рельеф острова: билинейная выборка карты высот
+  if (uTerrainOn == 1) {
+    vec2 g = (p.xz - uTerrainMin) / uTerrainSize * uTerrainN - 0.5;
+    ivec2 c0 = ivec2(floor(g));
+    vec2 f = g - floor(g);
+    ivec2 mx = ivec2(int(uTerrainN) - 1);
+    float h00 = texelFetch(uTerrainTex, clamp(c0, ivec2(0), mx), 0).r;
+    float h10 = texelFetch(uTerrainTex, clamp(c0 + ivec2(1, 0), ivec2(0), mx), 0).r;
+    float h01 = texelFetch(uTerrainTex, clamp(c0 + ivec2(0, 1), ivec2(0), mx), 0).r;
+    float h11 = texelFetch(uTerrainTex, clamp(c0 + ivec2(1, 1), ivec2(0), mx), 0).r;
+    float th = uTerrainFloorY + mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+    if (p.y < th + r) { p.y = th + r; nrm = vec3(0.0, 1.0, 0.0); }
   }
 
   // город: каждая клетка между дорогами — одно здание
@@ -324,7 +345,7 @@ void main() {
     if (cc.x < 0 || cc.y < 0 || cc.z < 0 || cc.x >= uGX || cc.y >= uGY || cc.z >= uGZ) continue;
     vec2 sc = texelFetch(uGridStart, ivec2(cc.x, cc.y + cc.z * uGY), 0).rg;
     int start = int(sc.x + 0.5);
-    int cnt = int(sc.y + 0.5);
+    int cnt = min(int(sc.y + 0.5), 40);   // плотная ячейка не должна взрывать цикл
     for (int k = 0; k < cnt; k++) {
       int li = start + k;
       int j = int(texelFetch(uGridIdx, ivec2(li % uTW, li / uTW), 0).x + 0.5);
@@ -392,7 +413,7 @@ void main() {
     if (cc.x < 0 || cc.y < 0 || cc.z < 0 || cc.x >= uGX || cc.y >= uGY || cc.z >= uGZ) continue;
     vec2 sc = texelFetch(uGridStart, ivec2(cc.x, cc.y + cc.z * uGY), 0).rg;
     int start = int(sc.x + 0.5);
-    int cnt = int(sc.y + 0.5);
+    int cnt = min(int(sc.y + 0.5), 40);   // плотная ячейка не должна взрывать цикл
     for (int k = 0; k < cnt; k++) {
       int li = start + k;
       int j = int(texelFetch(uGridIdx, ivec2(li % uTW, li / uTW), 0).x + 0.5);
@@ -471,7 +492,7 @@ void main() {
     if (cc.x < 0 || cc.y < 0 || cc.z < 0 || cc.x >= uGX || cc.y >= uGY || cc.z >= uGZ) continue;
     vec2 sc = texelFetch(uGridStart, ivec2(cc.x, cc.y + cc.z * uGY), 0).rg;
     int start = int(sc.x + 0.5);
-    int cnt = int(sc.y + 0.5);
+    int cnt = min(int(sc.y + 0.5), 40);   // плотная ячейка не должна взрывать цикл
     for (int k = 0; k < cnt; k++) {
       int li = start + k;
       int j = int(texelFetch(uGridIdx, ivec2(li % uTW, li / uTW), 0).x + 0.5);
@@ -772,6 +793,47 @@ void main() {
   fragColor = vec4(outc, 1.0);
 }`;
 
+  /* ---------- рельеф острова ---------- */
+
+  SH.terrainVS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec3 aColor;
+uniform mat4 uMVP;
+out vec3 vN;
+out vec3 vW;
+out vec3 vC;
+void main() {
+  vN = aNormal;
+  vW = aPos;
+  vC = aColor;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+
+  SH.terrainFS = `#version 300 es
+precision highp float;
+in vec3 vN;
+in vec3 vW;
+in vec3 vC;
+uniform vec3 uLightDir;
+uniform vec3 uCamPos;
+out vec4 oOut;
+void main() {
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCamPos - vW);
+  if (dot(N, V) < 0.0) N = -N;
+  float diff = clamp(dot(N, uLightDir) * 0.5 + 0.5, 0.0, 1.0);
+  vec3 H = normalize(uLightDir + V);
+  float spec = pow(clamp(dot(N, H), 0.0, 1.0), 26.0);
+  vec3 col = vC * (0.34 + 0.86 * diff);
+  col += vec3(0.95, 0.90, 0.78) * spec * 0.05;
+  // зернистость поверхности
+  float n = fract(sin(dot(floor(vW.xz * 9.0), vec2(12.9898, 78.233))) * 43758.5453);
+  col *= 0.93 + 0.14 * n;
+  oOut = vec4(col, 1.0);
+}`;
+
   /* ---------- здания: один инстанс = одно здание ---------- */
 
   SH.bldVS = `#version 300 es
@@ -959,7 +1021,49 @@ in vec2 vUV;
 uniform vec2 uRes;
 uniform int uMode;
 uniform float uTime;
+uniform float uClouds;
+uniform vec3 uCamPos;
+uniform vec3 uCamRight;
+uniform vec3 uCamUp;
+uniform vec3 uCamFwd;
+uniform float uTanFov;
+uniform float uCloudY0;
+uniform float uCloudY1;
 out vec4 oOut;
+
+/* --- объёмные облака --- */
+float hash31(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float noise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = hash31(i);
+  float n100 = hash31(i + vec3(1.0, 0.0, 0.0));
+  float n010 = hash31(i + vec3(0.0, 1.0, 0.0));
+  float n110 = hash31(i + vec3(1.0, 1.0, 0.0));
+  float n001 = hash31(i + vec3(0.0, 0.0, 1.0));
+  float n101 = hash31(i + vec3(1.0, 0.0, 1.0));
+  float n011 = hash31(i + vec3(0.0, 1.0, 1.0));
+  float n111 = hash31(i + vec3(1.0, 1.0, 1.0));
+  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+float fbm3(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 2; i++) { v += a * noise3(p); p *= 2.11; a *= 0.5; }
+  return v * 1.34;
+}
+float cloudDensity(vec3 p, float t) {
+  vec3 q = vec3(p.x, p.y * 1.7, p.z) * 0.026 + vec3(t * 0.010, 0.0, t * 0.006);
+  float d = fbm3(q);
+  // слой: плавный вход и выход по высоте
+  float vf = smoothstep(uCloudY0, uCloudY0 + 3.0, p.y) *
+             (1.0 - smoothstep(uCloudY1 - 5.0, uCloudY1, p.y));
+  return clamp((d - 0.50) * 3.4, 0.0, 1.0) * vf;
+}
 
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -1034,6 +1138,42 @@ void main() {
     col += vec3(0.10, 0.11, 0.13) * exp(-pow(length((uv - vec2(0.5, 0.75)) * vec2(1.0, 1.4)) * 2.0, 2.0));
   }
 
+  // объёмные облака: реймарч по слою
+  if (uClouds > 0.5) {
+    vec2 ndc = uv * 2.0 - 1.0;
+    float asp = uRes.x / max(1.0, uRes.y);
+    vec3 rd = normalize(uCamFwd + uCamRight * (ndc.x * uTanFov * asp) + uCamUp * (ndc.y * uTanFov));
+    if (rd.y > 0.002) {
+      float t0 = (uCloudY0 - uCamPos.y) / rd.y;
+      float t1 = (uCloudY1 - uCamPos.y) / rd.y;
+      float s0 = max(min(t0, t1), 0.0);
+      float s1 = max(t0, t1);
+      if (s1 > s0) {
+        const int STEPS = 14;
+        float dt = (s1 - s0) / float(STEPS);
+        float T = 1.0;
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < STEPS; i++) {
+          vec3 sp = uCamPos + rd * (s0 + dt * (float(i) + 0.5));
+          float d = cloudDensity(sp, uTime);
+          if (d > 0.004) {
+            vec3 lp = sp + normalize(vec3(0.45, 0.75, 0.30)) * 2.6;
+            float ld = cloudDensity(lp, uTime);
+            float lit = clamp(1.0 - ld * 1.5, 0.10, 1.0);
+            // небо просвечивает сквозь облако
+            vec3 cc = mix(vec3(0.30, 0.34, 0.42), vec3(1.02, 0.99, 0.94), lit);
+            cc = mix(cc, vec3(0.62, 0.70, 0.82), 0.35);
+            float a = clamp(d * 0.62, 0.0, 0.94);
+            acc += cc * a * T;
+            T *= (1.0 - a);
+            if (T < 0.02) break;
+          }
+        }
+        col = col * T + acc;
+      }
+    }
+  }
+
   oOut = vec4(col, 1.0);
 }`;
 
@@ -1052,6 +1192,7 @@ uniform float uGridFade;
 uniform int uFloorStyle;
 uniform float uBlock;
 uniform float uIslandR;
+uniform float uTime;
 out vec4 oOut;
 
 float gridLine(vec2 p, float s) {
@@ -1099,6 +1240,17 @@ void main() {
 
     base = ground * (0.45 + 0.85 * diff);
     base += vec3(0.10, 0.35, 0.45) * gridLine(vW.xz, blk) * 0.05 * fade;
+  } else if (uFloorStyle == 5) {
+    /* море вокруг острова */
+    float w1 = sin(vW.x * 0.55 + uTime * 0.7) * cos(vW.z * 0.48 - uTime * 0.5);
+    float w2 = sin(vW.x * 1.7 - uTime * 1.1) * cos(vW.z * 1.5 + uTime * 0.9);
+    vec3 deep = vec3(0.020, 0.075, 0.105);
+    vec3 shallow = vec3(0.045, 0.175, 0.185);
+    float rip = 0.5 + 0.5 * (w1 * 0.6 + w2 * 0.4);
+    vec3 sea = mix(deep, shallow, rip * 0.75);
+    float glint = pow(max(0.0, 1.0 - abs(w2) * 1.4), 8.0);
+    sea += vec3(0.55, 0.72, 0.78) * glint * 0.16;
+    base = sea * (0.75 + 0.35 * diff);
   } else if (uFloorStyle == 4) {
     /* остров: трава, у кромки — песок */
     float r = length(vW.xz);

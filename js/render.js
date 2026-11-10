@@ -47,6 +47,7 @@
       field: GL.program(gl, FS.SH.sceneVS, FS.SH.fieldFS, 'field'),
       portal: GL.program(gl, FS.SH.sceneVS, FS.SH.portalFS, 'portal'),
       bld: GL.program(gl, FS.SH.bldVS, FS.SH.bldFS, 'bld'),
+      terrain: GL.program(gl, FS.SH.terrainVS, FS.SH.terrainFS, 'terrain'),
       clear: GL.program(gl, FS.SH.fullscreenVS, FS.SH.clearFS, 'clear')
     };
 
@@ -266,6 +267,186 @@
     this.bldIdx = ii;
   };
 
+  /* Статичные объекты (пальмы, камни, деревья, дома) — одним мешем */
+  Renderer.prototype._rebuildProps = function (objs) {
+    var gl = this.gl;
+    var tplMap = { palm: this.palmTpl, rock: this.rockTpl, tree: this.treeTpl, house: this.houseTpl };
+    var n = 0, sig = 0, i, o;
+    for (i = 0; i < objs.length; i++) {
+      o = objs[i];
+      if (!tplMap[o.kind]) continue;
+      n++;
+      sig += o.pos[0] * 11.3 + o.pos[1] * 5.1 + o.pos[2] * 2.7 + (o.size ? o.size[1] * 37 : 0);
+    }
+    sig = Math.round(sig * 100) / 100 + ':' + n;
+    if (sig === this.propSig) return;
+    this.propSig = sig;
+    if (!n) { this.propIdx = 0; return; }
+
+    var totalV = 0, totalI = 0;
+    for (i = 0; i < objs.length; i++) {
+      o = objs[i];
+      var tp = tplMap[o.kind];
+      if (!tp) continue;
+      totalV += tp.inter.length / 9;
+      totalI += tp.indices.length;
+    }
+    var V = new Float32Array(totalV * 9);
+    var I = new Uint32Array(totalI);
+    var vi = 0, ii = 0, base = 0;
+
+    for (i = 0; i < objs.length; i++) {
+      o = objs[i];
+      var tpl = tplMap[o.kind];
+      if (!tpl) continue;
+      var sx, sy, sz;
+      if (o.kind === 'rock') { sx = o.size[0]; sy = o.size[1]; sz = o.size[2]; }
+      else if (o.kind === 'house') { sx = o.size[0]; sy = o.size[1]; sz = o.size[2]; }
+      else { sx = o.size[0]; sy = o.size[1]; sz = o.size[0]; }
+      var ca = Math.cos(o.rot || 0), sa = Math.sin(o.rot || 0);
+      var tint = o.kind === 'rock' ? o.color : null;
+      var tv = tpl.inter, tvn = tv.length / 9;
+      for (var v = 0; v < tvn; v++) {
+        var lx = tv[v * 9] * sx, ly = tv[v * 9 + 1] * sy, lz = tv[v * 9 + 2] * sz;
+        var wx = o.pos[0] + lx * ca + lz * sa;
+        var wy = o.pos[1] + ly;
+        var wz = o.pos[2] - lx * sa + lz * ca;
+        var nx = tv[v * 9 + 3] / sx, ny = tv[v * 9 + 4] / sy, nz = tv[v * 9 + 5] / sz;
+        var nl = Math.hypot(nx, ny, nz) || 1;
+        var rnx = (nx * ca + nz * sa) / nl, rnz = (-nx * sa + nz * ca) / nl;
+        var cr = tv[v * 9 + 6], cg = tv[v * 9 + 7], cb = tv[v * 9 + 8];
+        if (tint) { cr *= tint[0]; cg *= tint[1]; cb *= tint[2]; }
+        V[vi] = wx; V[vi + 1] = wy; V[vi + 2] = wz;
+        V[vi + 3] = rnx; V[vi + 4] = ny / nl; V[vi + 5] = rnz;
+        V[vi + 6] = cr; V[vi + 7] = cg; V[vi + 8] = cb;
+        vi += 9;
+      }
+      var ti = tpl.indices;
+      for (var t2 = 0; t2 < ti.length; t2++) I[ii++] = base + ti[t2];
+      base += tvn;
+    }
+
+    if (!this.propVAO) {
+      this.propVAO = gl.createVertexArray();
+      this.propVB = gl.createBuffer();
+      this.propIB = gl.createBuffer();
+    }
+    gl.bindVertexArray(this.propVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.propVB);
+    gl.bufferData(gl.ARRAY_BUFFER, V, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 36, 12);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 36, 24);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.propIB);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, I, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    this.propIdx = ii;
+  };
+
+  /* Рельеф острова: сетка из карты высот, цвета по высоте и уклону */
+  Renderer.prototype._buildTerrain = function (level) {
+    var gl = this.gl, T = level.terrain;
+    if (!T) { this.terrainIdx = 0; this.terrainKey = ''; return; }
+    var key = T.n + ':' + T.half + ':' + level.floorY;
+    if (key === this.terrainKey) return;
+    this.terrainKey = key;
+
+    var n = T.n, half = T.half, fy = level.floorY;
+    var step = (2 * half) / n;
+    var vcount = n * n;
+    var V = new Float32Array(vcount * 9);
+    var I = new Uint32Array((n - 1) * (n - 1) * 6);
+    var H = T.h;
+    var hAt = function (i, j) {
+      if (i < 0) i = 0; else if (i >= n) i = n - 1;
+      if (j < 0) j = 0; else if (j >= n) j = n - 1;
+      return H[j * n + i];
+    };
+
+    for (var j = 0; j < n; j++) {
+      for (var i = 0; i < n; i++) {
+        var x = -half + (i + 0.5) * step;
+        var z = -half + (j + 0.5) * step;
+        var h = H[j * n + i];
+        var hx = (hAt(i + 1, j) - hAt(i - 1, j)) / (2 * step);
+        var hz = (hAt(i, j + 1) - hAt(i, j - 1)) / (2 * step);
+        var nx = -hx, ny = 1, nz = -hz;
+        var nl = Math.hypot(nx, ny, nz) || 1;
+        nx /= nl; ny /= nl; nz /= nl;
+
+        var slope = 1 - ny;                       // 0 — ровно, 1 — отвесно
+        var r = Math.hypot(x, z);
+        var col;
+        var sand = [0.60, 0.53, 0.38], grass = [0.14, 0.33, 0.12];
+        var grass2 = [0.20, 0.42, 0.16], rock = [0.31, 0.29, 0.27];
+        var dark = [0.19, 0.17, 0.15];
+        if (h < 0.22) {
+          col = sand;
+        } else {
+          var g = Math.min(1, (h - 0.22) / 0.8);
+          col = [
+            sand[0] + (grass[0] - sand[0]) * g,
+            sand[1] + (grass[1] - sand[1]) * g,
+            sand[2] + (grass[2] - sand[2]) * g
+          ];
+          var v = h * 0.55 + Math.sin(x * 1.7) * 0.12 + Math.cos(z * 1.3) * 0.12;
+          col = [
+            col[0] + (grass2[0] - col[0]) * Math.min(1, Math.max(0, v)),
+            col[1] + (grass2[1] - col[1]) * Math.min(1, Math.max(0, v)),
+            col[2] + (grass2[2] - col[2]) * Math.min(1, Math.max(0, v))
+          ];
+        }
+        var rk = Math.min(1, Math.max(0, (slope - 0.28) * 3.2));
+        col = [
+          col[0] + (rock[0] - col[0]) * rk,
+          col[1] + (rock[1] - col[1]) * rk,
+          col[2] + (rock[2] - col[2]) * rk
+        ];
+        var dk = Math.min(1, Math.max(0, (h - 4.6) / 1.6 + (r < 1.7 ? 0.5 : 0)));
+        col = [
+          col[0] + (dark[0] - col[0]) * dk,
+          col[1] + (dark[1] - col[1]) * dk,
+          col[2] + (dark[2] - col[2]) * dk
+        ];
+
+        var o = (j * n + i) * 9;
+        V[o] = x; V[o + 1] = fy + h; V[o + 2] = z;
+        V[o + 3] = nx; V[o + 4] = ny; V[o + 5] = nz;
+        V[o + 6] = col[0]; V[o + 7] = col[1]; V[o + 8] = col[2];
+      }
+    }
+    var k2 = 0;
+    for (var jj = 0; jj < n - 1; jj++) {
+      for (var ii = 0; ii < n - 1; ii++) {
+        var a = jj * n + ii, b = a + 1, c = a + n, d = c + 1;
+        I[k2++] = a; I[k2++] = c; I[k2++] = b;
+        I[k2++] = b; I[k2++] = c; I[k2++] = d;
+      }
+    }
+
+    if (!this.terrainVAO) {
+      this.terrainVAO = gl.createVertexArray();
+      this.terrainVB = gl.createBuffer();
+      this.terrainIB = gl.createBuffer();
+    }
+    gl.bindVertexArray(this.terrainVAO);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.terrainVB);
+    gl.bufferData(gl.ARRAY_BUFFER, V, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 36, 12);
+    gl.enableVertexAttribArray(2);
+    gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 36, 24);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.terrainIB);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, I, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    this.terrainIdx = I.length;
+  };
+
   Renderer.prototype._buildGeometry = function () {
     var gl = this.gl;
 
@@ -290,7 +471,31 @@
         idx.push(a, b, a + 1, b, b + 1, a + 1);
       }
     }
-    this.sphere = this._uploadMesh(meshData(pos, nor, null, new Uint16Array(idx)));
+    this.sphereTpl = meshData(pos, nor, null, new Uint16Array(idx));
+    this.sphere = this._uploadMesh(this.sphereTpl);
+
+    // низкополигональный камень (для объединённого меша)
+    var rseg = 9, rring = 6;
+    var rp = [], rn = [], ri = [];
+    for (var ry = 0; ry <= rring; ry++) {
+      var rv = ry / rring, rphi = rv * Math.PI;
+      for (var rx = 0; rx <= rseg; rx++) {
+        var rt = rx / rseg * Math.PI * 2;
+        var rnx = Math.sin(rphi) * Math.cos(rt);
+        var rny = Math.cos(rphi);
+        var rnz = Math.sin(rphi) * Math.sin(rt);
+        var jitter = 0.82 + 0.36 * ((rx * 7 + ry * 13) % 5) / 5;
+        rp.push(rnx * jitter, rny * jitter, rnz * jitter);
+        rn.push(rnx, rny, rnz);
+      }
+    }
+    for (var ryy = 0; ryy < rring; ryy++) {
+      for (var rxx = 0; rxx < rseg; rxx++) {
+        var ra = ryy * (rseg + 1) + rxx, rb = ra + rseg + 1;
+        ri.push(ra, rb, ra + 1, rb, rb + 1, ra + 1);
+      }
+    }
+    this.rockTpl = meshData(rp, rn, null, new Uint16Array(ri));
 
     // куб
     var p2 = [], n2 = [], c2 = [], i2 = [];
@@ -313,7 +518,8 @@
     pushCone(pt, nt, ct, it, 0, -0.30, 0, 0.80, 0.34, 14, [0.10, 0.40, 0.20]);
     pushCone(pt, nt, ct, it, 0, 0.10, 0, 0.62, 0.30, 14, [0.13, 0.48, 0.24]);
     pushCone(pt, nt, ct, it, 0, 0.48, 0, 0.42, 0.28, 12, [0.16, 0.56, 0.28]);
-    this.tree = this._uploadMesh(meshData(pt, nt, ct, new Uint16Array(it)));
+    this.treeTpl = meshData(pt, nt, ct, new Uint16Array(it));
+    this.tree = this._uploadMesh(this.treeTpl);
 
     // пальма: изогнутый ствол + створки кроны
     var pp = [], np = [], cp = [], ip = [];
@@ -336,7 +542,8 @@
     }
     pushBoxRot(pp, np, cp, ip, 0.10, 0.80, 0.05, 0.055, 0.055, 0.055, 0, [0.30, 0.22, 0.10]);
     pushBoxRot(pp, np, cp, ip, -0.08, 0.76, -0.09, 0.05, 0.05, 0.05, 0, [0.28, 0.20, 0.09]);
-    this.palm = this._uploadMesh(meshData(pp, np, cp, new Uint16Array(ip)));
+    this.palmTpl = meshData(pp, np, cp, new Uint16Array(ip));
+    this.palm = this._uploadMesh(this.palmTpl);
 
     // здания: объединённый меш (один draw call на весь город)
     var bp = [], bn = [], bc = [], bi = [];
@@ -371,7 +578,8 @@
     pushBox(ph, nh, ch, ih, 0, -0.36, 0.87, 0.16, 0.36, 0.02, [0.30, 0.20, 0.12]);
     pushBox(ph, nh, ch, ih, 0, -0.02, 0.87, 0.13, 0.13, 0.02, [0.98, 0.85, 0.45]);
     pushPrism(ph, nh, ch, ih, 0.98, 0.98, 0.10, 0.92, [0.72, 0.22, 0.18]);
-    this.house = this._uploadMesh(meshData(ph, nh, ch, new Uint16Array(ih)));
+    this.houseTpl = meshData(ph, nh, ch, new Uint16Array(ih));
+    this.house = this._uploadMesh(this.houseTpl);
 
     // вулкан: усечённый конус с тёмным жерлом
     var pv = [], nv = [], cv = [], iv = [];
@@ -620,6 +828,18 @@
     GL.u2f(gl, p, 'uRes', W, H);
     GL.u1i(gl, p, 'uMode', Math.max(0, SKY_ORDER.indexOf(state.skybox)));
     GL.u1f(gl, p, 'uTime', this.time);
+    GL.u1f(gl, p, 'uClouds', this.clouds ? 1 : 0);
+    if (this.clouds) {
+      var V = cam.view;
+      GL.u3f(gl, p, 'uCamPos', cam.eye[0], cam.eye[1], cam.eye[2]);
+      GL.u3f(gl, p, 'uCamRight', V[0], V[4], V[8]);
+      GL.u3f(gl, p, 'uCamUp', V[1], V[5], V[9]);
+      GL.u3f(gl, p, 'uCamFwd', -V[2], -V[6], -V[10]);
+      GL.u1f(gl, p, 'uTanFov', 1.0 / Math.max(0.01, cam.proj[5]));
+      var cy0 = (level.terrain ? 9.0 : (level.wallTop || 1.6) + 1.6);
+      GL.u1f(gl, p, 'uCloudY0', cy0);
+      GL.u1f(gl, p, 'uCloudY1', cy0 + 9.0);
+    }
     gl.bindVertexArray(this.quadVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -657,12 +877,32 @@
       GL.u1i(gl, p, 'uFloorStyle', level.floorStyle || 0);
       GL.u1f(gl, p, 'uBlock', level.city ? level.cell : 1.0);
       GL.u1f(gl, p, 'uIslandR', (level.half || 2) * 1.02);
+      GL.u1f(gl, p, 'uTime', this.time);
       gl.bindVertexArray(this.plane.vao);
       gl.drawElements(gl.TRIANGLES, this.plane.count, gl.UNSIGNED_SHORT, 0);
     }
 
-    // вулкан
-    if (level.cone) {
+    // рельеф острова
+    if (level.terrain) {
+      this._buildTerrain(level);
+      if (this.terrainIdx > 0) {
+        var pt = this.progs.terrain;
+        gl.useProgram(pt.program);
+        GL.um4(gl, pt, 'uMVP', vp);
+        GL.u3fv(gl, pt, 'uLightDir', this.lightDir);
+        GL.u3fv(gl, pt, 'uCamPos', cam.eye);
+        gl.bindVertexArray(this.terrainVAO);
+        gl.drawElements(gl.TRIANGLES, this.terrainIdx, gl.UNSIGNED_INT, 0);
+        gl.bindVertexArray(null);
+        p = this.progs.scene;
+        gl.useProgram(p.program);
+        GL.u3fv(gl, p, 'uLightDir', this.lightDir);
+        GL.u3fv(gl, p, 'uCamPos', cam.eye);
+      }
+    }
+
+    // вулкан (если нет рельефа — рисуем отдельным конусом)
+    if (level.cone && !level.terrain) {
       p = this.progs.scene;
       gl.useProgram(p.program);
       GL.u3fv(gl, p, 'uLightDir', this.lightDir);
@@ -688,6 +928,23 @@
     GL.u3fv(gl, p, 'uCamPos', cam.eye);
 
     var objs = sim.objects;
+
+    // --- статичные объекты одним вызовом ---
+    this._rebuildProps(objs);
+    if (this.propIdx > 0) {
+      var pp2 = this.progs.terrain;
+      gl.useProgram(pp2.program);
+      GL.um4(gl, pp2, 'uMVP', vp);
+      GL.u3fv(gl, pp2, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, pp2, 'uCamPos', cam.eye);
+      gl.bindVertexArray(this.propVAO);
+      gl.drawElements(gl.TRIANGLES, this.propIdx, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
+      p = this.progs.scene;
+      gl.useProgram(p.program);
+      GL.u3fv(gl, p, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, p, 'uCamPos', cam.eye);
+    }
 
     // --- все здания одним вызовом ---
     this._rebuildBuildings(objs);
@@ -723,7 +980,9 @@
         gl.drawElements(gl.TRIANGLES, this.sphere.count, gl.UNSIGNED_SHORT, 0);
       } else if (o.kind === 'building') {
         continue;   // рисуются инстансно выше
-      } else if (o.kind === 'palm') {
+      } else if (o.kind === 'palm' || o.kind === 'rock' || o.kind === 'tree' || o.kind === 'house') {
+        continue;   // объединены в общий меш выше
+      } else if (o.kind === 'palmOLD') {
         var mpa = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[0]);
         GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mpa));
         GL.um4(gl, p, 'uModel', mpa);
@@ -1213,7 +1472,10 @@
   var _radBuf = new Float32Array(8);
   function radScales() {
     var T = FS.World.TYPES;
-    for (var i = 0; i < 8; i++) _radBuf[i] = (T[i] && T[i].fluid) ? 1.0 : 0.32;
+    for (var i = 0; i < 8; i++) {
+      var t = T[i];
+      _radBuf[i] = t ? (t.rad || (t.fluid ? 1.0 : 0.32)) : 0;
+    }
     return _radBuf;
   }
 

@@ -66,6 +66,7 @@
       'type.snow': 'Snow',
       'type.sand': 'Sand',
       'type.dust': 'Dust',
+      'type.rain': 'Rain',
 
       'kind.sphere': 'Sphere',
       'kind.building': 'Building',
@@ -220,6 +221,7 @@
       'type.snow': 'Снег',
       'type.sand': 'Песок',
       'type.dust': 'Пыль',
+      'type.rain': 'Дождь',
 
       'kind.sphere': 'Сфера',
       'kind.building': 'Здание',

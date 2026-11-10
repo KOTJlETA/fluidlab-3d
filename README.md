@@ -22,9 +22,12 @@ Besides liquids there is a second category — **granular particles** (snow, san
 
 - **Liquids:** water, oil, lava, slime — each with its own spacing, viscosity and buoyancy.
 - **Granular:** snow, sand, dust — ballistic particles with per-type gravity and drag.
-- **Levels:** Mini city, Mid city, Giant city, Snow globe, Volcano island, Open ground, Portal lab.
+- **Levels:** Mini city, Mid city, Giant city, Snow globe, Volcano island, Portal lab.
 - **Tile-based cities:** every city is a grid of blocks; one building per block, roads between. Building, car and particle sizes are identical on all three city levels — only the number of buildings changes (about 90 / 540 / 2350). Buildings are drawn in a single merged draw call.
-- **Scenarios per level:** Flood / Sewer burst / Tsunami / Downpour / Mixed fluids (cities), Snowfall (snow globe), Eruption / Lava flow (volcano), River / Downpour / Mixed (open ground), Portal loop (portal lab). One source by default; only scenarios that need many (tsunami waves, sewer burst) create several.
+- **Scenarios per level:** Flood / Sewer burst / Tsunami / Downpour / Mixed fluids (cities), Snowfall (snow globe), Eruption / Lava flow / Downpour (volcano), Portal loop (portal lab). One source by default; only scenarios that need many (tsunami waves, sewer burst) create several.
+- **Volcano island:** a 34 × 34 procedural heightfield — ridges, gullies and a truncated volcanic cone with a crater basin, sand shore and surrounding sea. Lava runs down the radial crevices; ~150 palms and rocks sit on the terrain surface.
+- **Volumetric clouds:** a ray-marched cloud layer with fbm density and sun scattering, enabled on every downpour scenario, with the camera dropping to a lower angle so the sky is in frame.
+- **Rain:** the downpour emitter spans the whole level, so drops fall everywhere instead of pouring out of one pipe.
 - **Modes:** Navigate (hand) and Edit (cursor); navigation is the default.
 - **Sky presets:** grid, night, sunset, day, nebula, studio, Christmas night.
 - **Obstacles:** buildings with lit windows, cars, trees, snowmen, wooden houses, a volcano cone — all with collision.

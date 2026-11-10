@@ -184,10 +184,11 @@
     } else {
       lo = L.min.slice(); hi = L.max.slice();
     }
+    this.GMAX = L.terrain ? 72 : 48;
     this.gridExtent = [hi[0] - lo[0] + 2 * pad, hi[1] - lo[1] + 2 * pad, hi[2] - lo[2] + 2 * pad];
-    this.GX = Math.min(48, Math.ceil(this.gridExtent[0] / this.h));
-    this.GY = Math.min(22, Math.ceil(this.gridExtent[1] / this.h));
-    this.GZ = Math.min(48, Math.ceil(this.gridExtent[2] / this.h));
+    this.GX = Math.min(this.GMAX, Math.ceil(this.gridExtent[0] / this.h));
+    this.GY = Math.min(L.terrain ? 24 : 32, Math.ceil(this.gridExtent[1] / this.h));
+    this.GZ = Math.min(this.GMAX, Math.ceil(this.gridExtent[2] / this.h));
     // сетка центрируется по уровню: после ограничения числа ячеек границы не должны «съезжать»
     var cxL = (lo[0] + hi[0]) * 0.5, cyL = (lo[1] + hi[1]) * 0.5, czL = (lo[2] + hi[2]) * 0.5;
     this.gridMin = [
@@ -508,7 +509,7 @@
     var ex = Math.max(mxx - mnx + 2 * pad, 10 * h);
     var ey = Math.max(mxy - mny + 2 * pad, 8 * h);
     var ez = Math.max(mxz - mnz + 2 * pad, 10 * h);
-    var cs = Math.max(h, ex / 48, ey / 22, ez / 48);
+    var cs = Math.max(h, ex / this.GMAX, ey / 32, ez / this.GMAX);
 
     var inside = this.gridMin &&
       mnx > this.gridMin[0] && mxx < this.gridMin[0] + this.GX * this.cellSize &&
@@ -517,9 +518,9 @@
     if (!need) return;
 
     this.cellSize = cs;
-    this.GX = Math.min(48, Math.max(8, Math.ceil(ex / cs)));
-    this.GY = Math.min(22, Math.max(6, Math.ceil(ey / cs)));
-    this.GZ = Math.min(48, Math.max(8, Math.ceil(ez / cs)));
+    this.GX = Math.min(this.GMAX, Math.max(8, Math.ceil(ex / cs)));
+    this.GY = Math.min(32, Math.max(6, Math.ceil(ey / cs)));
+    this.GZ = Math.min(this.GMAX, Math.max(8, Math.ceil(ez / cs)));
     var cx = (mnx + mxx) * 0.5, cy = (mny + mxy) * 0.5, cz = (mnz + mxz) * 0.5;
     this.gridMin = [
       cx - this.GX * cs * 0.5,
@@ -670,7 +671,7 @@
     GL.u1f(gl, p, 'uPRadius', this.pRadius);
 
     var cone = L.cone;
-    if (cone) {
+    if (cone && !L.terrain) {
       GL.u1f(gl, p, 'uConeOn', 1);
       GL.u3f(gl, p, 'uConeC', 0, L.floorY, 0);
       GL.u1f(gl, p, 'uConeR0', cone.r0);
@@ -678,6 +679,23 @@
       GL.u1f(gl, p, 'uConeH', cone.h);
     } else {
       GL.u1f(gl, p, 'uConeOn', 0);
+    }
+
+    // рельеф острова: карта высот
+    if (L.terrain) {
+      if (!this.terrainTex || this.terrainN !== L.terrain.n) {
+        if (this.terrainTex) gl.deleteTexture(this.terrainTex);
+        this.terrainTex = GL.texture(gl, L.terrain.n, L.terrain.n, gl.R32F, gl.RED, gl.FLOAT, L.terrain.h, gl.NEAREST);
+        this.terrainN = L.terrain.n;
+      }
+      GL.bindTex(gl, p, 'uTerrainTex', this.terrainTex, 7);
+      GL.u1i(gl, p, 'uTerrainOn', 1);
+      GL.u2f(gl, p, 'uTerrainMin', -L.half, -L.half);
+      GL.u1f(gl, p, 'uTerrainSize', 2 * L.half);
+      GL.u1f(gl, p, 'uTerrainN', L.terrain.n);
+      GL.u1f(gl, p, 'uTerrainFloorY', L.floorY);
+    } else {
+      GL.u1i(gl, p, 'uTerrainOn', 0);
     }
 
     // город: сетка кварталов текстурой (n x n, RGBA32F)

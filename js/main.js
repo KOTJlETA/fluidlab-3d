@@ -210,6 +210,10 @@
     sim.sources = App.state.sources;
     App.vortex = (key === 'whirl');
     App.state.vortex = App.vortex;
+    // в ливень камера ниже — видно небо с облаками
+    var LV = World.LEVELS[App.state.level];
+    var basePhi = (LV && LV.camPhi) || 0.98;
+    cam.phi = (key === 'rain') ? Math.max(basePhi, 1.24) : basePhi;
     var vb = document.getElementById('btn-preset');
     if (vb) vb.classList.toggle('active', App.vortex);
     App.select(null);
@@ -707,6 +711,7 @@
     resize();
     cam.update(canvas.width, canvas.height);
     renderer.time = sim.time;
+    renderer.clouds = (App.state.scenario === 'rain');
     renderer.renderScene(cam, sim, App.state, App.gizmo);
     renderer.renderFluid(cam, sim);
 

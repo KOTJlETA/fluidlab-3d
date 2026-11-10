@@ -15,43 +15,51 @@
     this.TH = Math.ceil(this.count / this.TW);
     this.N = this.TW * this.TH;
 
-    this.h = opts.h || 0.11;
+    this.level = FS.World.LEVELS.city_mini;
+    this.scale = this.level.scale;
+    this.h = 0.17 * this.scale;
     this.cellSize = this.h;
-    this.gridMin = [-1.5, -1.5, -1.5];
-    var gn = Math.ceil(3.0 / this.h);
-    this.GX = gn; this.GY = gn; this.GZ = gn;
+    this.gridMin = [-3, -3, -3];
+    this.GX = 36; this.GY = 36; this.GZ = 36;
     this.gridCells = this.GX * this.GY * this.GZ;
 
-    this.boxMin = [-1.0, -1.0, -1.0];
-    this.boxMax = [1.0, 0.9, 1.0];
-    this.wallTop = 0.9;
-    this.pRadius = 0.027;
+    this.objects = [];
+    this.sources = FS.World.defaultSources('city_mini');
 
-    this.spacing = [0.055, 0.063, 0.051, 0.058];
-    this.buoy = [0.0, 1.6, -2.2, 0.0];
-    this.radiusRender = 0.079;
+    this.pRadius = 0.040 * this.scale;
+    this.spacing = new Float32Array(8);
+    var sp0 = [0.082, 0.094, 0.075, 0.086, 0.088, 0.086, 0.080, 0.086];
+    for (var si = 0; si < 8; si++) this.spacing[si] = sp0[si] * this.scale;
+    this.buoy = new Float32Array([0.0, 0.35, -0.9, 0.0, -0.25, 0.4, -1.2, 0.0]);
+    this.radiusRender = 0.122 * this.scale;
 
     this.gravity = -9.81;
-    this.maxSpeed = 6.0;
+    this.maxSpeed = 6.0 * this.scale;
     this.iterations = 2;
-    this.visc = [0.10, 0.30, 0.55, 0.85];
+    this.visc = new Float32Array([0.10, 0.30, 0.55, 0.85, 0.42, 0.22, 0.35, 0.5]);
     this.sCorrK = 0.0004;
     this.eps = 1e-5;
     this.cMin = -0.08;
     this.lamMax = 0.002;
-
-    this.obstacles = { sph: [], box: [] };
-
-    this.sources = [
-      { pos: [-0.55, 1.20, 0.10], dir: [0, -1, 0], radius: 0.175, speed: 2.1, type: 0, rate: 620, enabled: true, acc: 0 },
-      { pos: [0.58, 1.32, -0.15], dir: [0, -1, 0], radius: 0.155, speed: 2.3, type: 1, rate: 470, enabled: true, acc: 0 },
-      { pos: [0.02, 1.58, 0.55], dir: [0, -1, 0], radius: 0.145, speed: 1.9, type: 3, rate: 380, enabled: true, acc: 0 }
-    ];
+    this.viscScale = 1.0;
+    this.vortex = 0;
 
     this.mouse = { pos: [0, 0, 0], force: [0, 0, 0], radius: 0 };
     this.lastDt = 1 / 60;
     this.time = 0;
     this._spawnList = [];
+
+    this.uSph = new Float32Array(16 * 4);
+    this.uBox = new Float32Array(40 * 4);
+    this.uBoxHalf = new Float32Array(40 * 3);
+    this.uField = new Float32Array(8 * 4);
+    this.uFieldP = new Float32Array(8 * 4);
+    this.uFieldDir = new Float32Array(8 * 4);
+    this.uPortalA = new Float32Array(4 * 4);
+    this.uPortalB = new Float32Array(4 * 4);
+    this.uPortalAn = new Float32Array(4 * 4);
+    this.uPortalBn = new Float32Array(4 * 4);
+    this.counts = { sph: 0, box: 0, field: 0, portal: 0 };
 
     this._alloc();
     this.reset();
@@ -87,25 +95,17 @@
     this.lam = this._mkTarget();
     this.posB = this._mkTarget();
     this.velB = this._mkTarget();
-
-    // MRT для пасса скорости
     this.mrt = GL.fbo(gl, [this.posB.tex, this.velB.tex], null);
 
-    // статическая текстура типа: x = тип, y = seed
     this.typeData = new Float32Array(N * 4);
     this.typeTex = GL.texture(gl, this.TW, this.TH, gl.RGBA32F, gl.RGBA, gl.FLOAT, this.typeData, gl.NEAREST);
 
-    // сетка
-    this.gridTex = GL.texture(gl, this.GX, this.GY * this.GZ, gl.RG32F, gl.RG, gl.FLOAT, null, gl.NEAREST);
-    this.gridUpload = new Float32Array(this.gridCells * 2);
-    this.cellCounts = new Int32Array(this.gridCells);
-    this.cellStart = new Int32Array(this.gridCells);
-    this.cursor = new Int32Array(this.gridCells);
+    this.gridTex = null;
+    this._allocGrid();
     this.cellOf = new Int32Array(N);
     this.gridIdx = new Float32Array(N);
     this.gridIdxTex = GL.texture(gl, this.TW, this.TH, gl.R32F, gl.RED, gl.FLOAT, null, gl.NEAREST);
 
-    // CPU-копии
     this.posCPU = new Float32Array(N * 4);
     this.velCPU = new Float32Array(N * 4);
     this.alive = new Uint8Array(N);
@@ -116,7 +116,6 @@
     this._dirtyFlag = new Uint8Array(N);
     this._spawnList = [];
 
-    // программы
     this.prog = {
       predict: GL.program(gl, FS.SH.fullscreenVS, FS.SH.predictFS, 'predict'),
       density: GL.program(gl, FS.SH.fullscreenVS, FS.SH.densityFS, 'density'),
@@ -126,16 +125,56 @@
 
     this.quadVAO = GL.fullscreenVAO(gl);
 
-    // константы ядра
     var h = this.h;
     var PI = Math.PI;
     this.kPoly6 = 315 / (64 * PI * Math.pow(h, 9));
     this.kSpiky = 45 / (PI * Math.pow(h, 6));
   };
 
-  FluidSim.prototype.setCount = function (n) {
-    // полная переаллокация — вызывается из UI
+  FluidSim.prototype._allocGrid = function () {
     var gl = this.gl;
+    if (this.gridTex) gl.deleteTexture(this.gridTex);
+    this.gridTex = GL.texture(gl, this.GX, this.GY * this.GZ, gl.RG32F, gl.RG, gl.FLOAT, null, gl.NEAREST);
+    this.gridUpload = new Float32Array(this.gridCells * 2);
+    this.cellCounts = new Int32Array(this.gridCells);
+    this.cellStart = new Int32Array(this.gridCells);
+    this.cursor = new Int32Array(this.gridCells);
+  };
+
+  /* Перестроить мир под уровень: масштаб частиц, шаг решётки, границы */
+  FluidSim.prototype.applyLevel = function (level, keepFluid) {
+    this.level = level;
+    var s = level.scale || 1;
+    this.scale = s;
+    this.h = 0.17 * s;
+    this.cellSize = this.h;
+    var sp0 = [0.082, 0.094, 0.075, 0.086, 0.088, 0.086, 0.080, 0.086];
+    for (var si = 0; si < 8; si++) this.spacing[si] = sp0[si] * s;
+    this.pRadius = 0.040 * s;
+    this.radiusRender = 0.95 * this.h;
+    this.maxSpeed = 6.0 * s;
+
+    var PI = Math.PI, h = this.h;
+    this.kPoly6 = 315 / (64 * PI * Math.pow(h, 9));
+    this.kSpiky = 45 / (PI * Math.pow(h, 6));
+
+    var L = level, pad = 6 * this.h, lo, hi;
+    if (L.kind === 'sphere') {
+      lo = [L.center[0] - L.radius, L.center[1] - L.radius, L.center[2] - L.radius];
+      hi = [L.center[0] + L.radius, L.center[1] + L.radius, L.center[2] + L.radius];
+    } else {
+      lo = L.min.slice(); hi = L.max.slice();
+    }
+    this.gridMin = [lo[0] - pad, lo[1] - pad, lo[2] - pad];
+    this.GX = Math.ceil((hi[0] - lo[0] + 2 * pad) / this.h);
+    this.GY = Math.ceil((hi[1] - lo[1] + 2 * pad) / this.h);
+    this.GZ = Math.ceil((hi[2] - lo[2] + 2 * pad) / this.h);
+    this.gridCells = this.GX * this.GY * this.GZ;
+    this._allocGrid();
+    if (!keepFluid) this.reset();
+  };
+
+  FluidSim.prototype.setCount = function (n) {
     this.count = n;
     this.TH = Math.ceil(n / this.TW);
     this.N = this.TW * this.TH;
@@ -143,30 +182,71 @@
     this.reset();
   };
 
-  FluidSim.prototype.blocked = function (x, y, z) {
-    var m = 0.05;
-    var i, o;
-    for (i = 0; i < this.obstacles.sph.length; i++) {
-      o = this.obstacles.sph[i];
-      var dx = x - o.c[0], dy = y - o.c[1], dz = z - o.c[2];
-      if (dx * dx + dy * dy + dz * dz < (o.r + m) * (o.r + m)) return true;
+  FluidSim.prototype.setLevel = function (level) { this.level = level; };
+  FluidSim.prototype.setObjects = function (objects) { this.objects = objects; };
+
+  /* ---------------- границы уровня ---------------- */
+
+  FluidSim.prototype.levelKind = function () {
+    var k = this.level.kind;
+    return k === 'sphere' ? 1 : (k === 'none' ? 2 : 0);
+  };
+
+  FluidSim.prototype.insideContainer = function (x, y, z) {
+    var L = this.level;
+    if (L.kind === 'sphere') {
+      var dx = x - L.center[0], dy = y - L.center[1], dz = z - L.center[2];
+      return dx * dx + dy * dy + dz * dz < (L.radius - 0.03) * (L.radius - 0.03);
     }
-    for (i = 0; i < this.obstacles.box.length; i++) {
-      o = this.obstacles.box[i];
-      if (Math.abs(x - o.c[0]) < o.h[0] + m && Math.abs(y - o.c[1]) < o.h[1] + m &&
-          Math.abs(z - o.c[2]) < o.h[2] + m) return true;
+    var mn = L.min || [-1, -1, -1], mx = L.max || [1, 0.9, 1];
+    var s = this.scale || 1;
+    return x > mn[0] + 0.03 && x < mx[0] - 0.03 &&
+           z > mn[2] + 0.03 && z < mx[2] - 0.03 &&
+           y > mn[1] && y < (L.wallTop || mx[1]) + 1.0 * s;
+  };
+
+  FluidSim.prototype.outOfBounds = function (x, y, z) {
+    var L = this.level;
+    if (L.kind === 'sphere') {
+      var dx = x - L.center[0], dy = y - L.center[1], dz = z - L.center[2];
+      var d = Math.hypot(dx, dy, dz);
+      return d > L.radius + 0.35 || y < L.center[1] - L.radius - 0.35;
+    }
+    if (L.kind === 'none') {
+      return y < L.min[1] - 0.5 ||
+             Math.abs(x) > L.max[0] + 0.75 || Math.abs(z) > L.max[2] + 0.75;
+    }
+    var s = this.scale || 1;
+    return y < L.min[1] - 0.45 * s || y > (L.wallTop || L.max[1]) + 1.2 * s ||
+           Math.abs(x) > L.max[0] + 0.45 * s || Math.abs(z) > L.max[2] + 0.45 * s;
+  };
+
+  FluidSim.prototype.blocked = function (x, y, z) {
+    var m = 0.05, i, o;
+    for (i = 0; i < this.objects.length; i++) {
+      o = this.objects[i];
+      if (o.kind === 'sphere') {
+        var dx = x - o.pos[0], dy = y - o.pos[1], dz = z - o.pos[2];
+        if (dx * dx + dy * dy + dz * dz < (o.r + m) * (o.r + m)) return true;
+      } else if (o.kind === 'building' || o.kind === 'car') {
+        var ca = Math.cos(-(o.rot || 0)), sa = Math.sin(-(o.rot || 0));
+        var rx = x - o.pos[0], rz = z - o.pos[2];
+        var lx = rx * ca - rz * sa, lz = rx * sa + rz * ca;
+        if (Math.abs(lx) < o.size[0] + m && Math.abs(y - o.pos[1]) < o.size[1] + m &&
+            Math.abs(lz) < o.size[2] + m) return true;
+      }
     }
     return false;
   };
+
+  /* ---------------- сброс ---------------- */
 
   FluidSim.prototype.reset = function () {
     var gl = this.gl, N = this.N;
     this.posCPU.fill(0);
     this.velCPU.fill(0);
     for (var i = 0; i < N; i++) {
-      this.posCPU[i * 4] = 0;
       this.posCPU[i * 4 + 1] = PARK_Y;
-      this.posCPU[i * 4 + 2] = 0;
       this.typeData[i * 4] = 0;
       this.typeData[i * 4 + 1] = Math.random();
     }
@@ -185,23 +265,37 @@
     this.time = 0;
     this.killCursor = 0;
 
-    // начальная лужа: решётка в нижней части резервуара
+    var L = this.level;
+    var scl = this.scale || 1;
     var sp = this.spacing[0];
-    var y0 = this.boxMin[1] + 0.05;
-    var lim = 0.94;
+    var cx = 0, cz = 0, botY = -1, lim = 0.94;
+    if (L.kind === 'sphere') {
+      cx = L.center[0]; cz = L.center[2];
+      botY = L.center[1] - L.radius + 0.05 * scl;
+      lim = L.radius * 0.62;
+    } else {
+      cx = (L.min[0] + L.max[0]) / 2;
+      cz = (L.min[2] + L.max[2]) / 2;
+      botY = L.min[1] + 0.05 * scl;
+      lim = (Math.min(L.max[0] - L.min[0], L.max[2] - L.min[2]) / 2 - 0.06) * 0.62;
+    }
+
     var nx = Math.floor((lim * 2) / sp);
-    var ny = Math.floor(0.34 / sp);
-    var want = Math.min(Math.floor(N * 0.42), nx * ny * nx);
+    var ny = Math.floor(0.95 * scl / sp);
+    var frac = L.kind === 'sphere' ? 0.09 : 0.16;
+    var want = Math.min(Math.floor(N * frac), nx * ny * nx);
     var placed = 0;
     for (var yy = 0; yy < ny && placed < want; yy++) {
       for (var zz = 0; zz < nx && placed < want; zz++) {
         for (var xx = 0; xx < nx && placed < want; xx++) {
-          var jx = (Math.random() - 0.5) * 0.008;
-          var jy = (Math.random() - 0.5) * 0.008;
-          var jz = (Math.random() - 0.5) * 0.008;
-          var px = -lim + (xx + 0.5) * sp + jx;
-          var py = y0 + (yy + 0.5) * sp + jy;
-          var pz = -lim + (zz + 0.5) * sp + jz;
+          var px = cx - lim + (xx + 0.5) * sp + (Math.random() - 0.5) * 0.008;
+          var py = botY + (yy + 0.5) * sp + (Math.random() - 0.5) * 0.008;
+          var pz = cz - lim + (zz + 0.5) * sp + (Math.random() - 0.5) * 0.008;
+          if (!this.insideContainer(px, py, pz)) continue;
+          if (L.kind === 'sphere') {
+            var avail = Math.sqrt(Math.max(0, (L.radius - 0.06) * (L.radius - 0.06) - (py - L.center[1]) * (py - L.center[1])));
+            if (Math.hypot(px - cx, pz - cz) > avail) continue;
+          }
           if (this.blocked(px, py, pz)) continue;
           var idx = this.free.pop();
           if (idx === undefined) break;
@@ -221,17 +315,40 @@
     this._flushSpawns();
   };
 
-  FluidSim.prototype._spawnAt = function (i, src, yOverride) {
+  /* ---------------- спавн ---------------- */
+
+  function perpBasis(d) {
+    var up = Math.abs(d[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+    var ux = up[1] * d[2] - up[2] * d[1];
+    var uy = up[2] * d[0] - up[0] * d[2];
+    var uz = up[0] * d[1] - up[1] * d[0];
+    var l = Math.hypot(ux, uy, uz) || 1;
+    ux /= l; uy /= l; uz /= l;
+    var vx = d[1] * uz - d[2] * uy;
+    var vy = d[2] * ux - d[0] * uz;
+    var vz = d[0] * uy - d[1] * ux;
+    return [ux, uy, uz, vx, vy, vz];
+  }
+
+  FluidSim.prototype._spawnAt = function (i, src) {
+    var d = src.dir || [0, -1, 0];
+    var dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    var dx = d[0] / dl, dy = d[1] / dl, dz = d[2] / dl;
+    var b = perpBasis([dx, dy, dz]);
+
     var r = Math.sqrt(Math.random()) * src.radius;
     var a = Math.random() * Math.PI * 2;
-    var jitter = 0.02;
-    this.posCPU[i * 4] = src.pos[0] + Math.cos(a) * r;
-    this.posCPU[i * 4 + 1] = (yOverride !== undefined) ? yOverride : src.pos[1] + (Math.random() - 0.5) * 0.05;
-    this.posCPU[i * 4 + 2] = src.pos[2] + Math.sin(a) * r;
+    var ca = Math.cos(a) * r, sa = Math.sin(a) * r;
+    var jitter = 0.03;
 
-    this.velCPU[i * 4] = (Math.random() - 0.5) * jitter;
-    this.velCPU[i * 4 + 1] = -src.speed + (Math.random() - 0.5) * jitter;
-    this.velCPU[i * 4 + 2] = (Math.random() - 0.5) * jitter;
+    this.posCPU[i * 4] = src.pos[0] + b[0] * ca + b[3] * sa;
+    this.posCPU[i * 4 + 1] = src.pos[1] + b[1] * ca + b[4] * sa;
+    this.posCPU[i * 4 + 2] = src.pos[2] + b[2] * ca + b[5] * sa;
+
+    var sp = src.speed;
+    this.velCPU[i * 4] = dx * sp + (Math.random() - 0.5) * jitter;
+    this.velCPU[i * 4 + 1] = dy * sp + (Math.random() - 0.5) * jitter;
+    this.velCPU[i * 4 + 2] = dz * sp + (Math.random() - 0.5) * jitter;
 
     this.typeData[i * 4] = src.type;
     this.alive[i] = 1;
@@ -290,28 +407,29 @@
     this.posCPU[i * 4 + 2] = 0;
     this.velCPU[i * 4] = this.velCPU[i * 4 + 1] = this.velCPU[i * 4 + 2] = 0;
     this.free.push(i);
-    this._mark(i);   // нужно отправить новую позицию на GPU
+    this._mark(i);
   };
 
   FluidSim.prototype.killOutOfBounds = function () {
     var p = this.posCPU;
     for (var i = 0; i < this.N; i++) {
       if (!this.alive[i]) continue;
-      var y = p[i * 4 + 1], x = p[i * 4], z = p[i * 4 + 2];
-      if (y < -1.45 || y > 3.0 || Math.abs(x) > 1.45 || Math.abs(z) > 1.45) this._kill(i);
+      if (this.outOfBounds(p[i * 4], p[i * 4 + 1], p[i * 4 + 2])) this._kill(i);
     }
   };
 
-  // забираем частицы из глубины лужи, чтобы обеспечить непрерывный поток
   FluidSim.prototype._reclaim = function (need) {
     var p = this.posCPU, guard = 0, killed = 0;
     var maxGuard = this.N * 2;
+    var floorY = this.level.kind === 'sphere'
+      ? this.level.center[1] - this.level.radius * 0.55
+      : -0.45;
     while (this.free.length < need && guard < maxGuard) {
       var i = this.killCursor;
       this.killCursor = (this.killCursor + 1) % this.N;
       guard++;
       if (!this.alive[i]) continue;
-      if (p[i * 4 + 1] < -0.45) { this._kill(i); killed++; }
+      if (p[i * 4 + 1] < floorY) { this._kill(i); killed++; }
     }
     return killed;
   };
@@ -405,32 +523,90 @@
     GL.u2f(gl, p, 'uTexSize', this.TW, this.TH);
   };
 
+  FluidSim.prototype._packScene = function () {
+    var objs = this.objects;
+    var S = this.uSph, B = this.uBox, BH = this.uBoxHalf;
+    var F = this.uField, FP = this.uFieldP, FD = this.uFieldDir;
+    var PA = this.uPortalA, PB = this.uPortalB, PAn = this.uPortalAn, PBn = this.uPortalBn;
+    var ns = 0, nb = 0, nf = 0, np = 0;
+    var byId = {};
+
+    for (var i = 0; i < objs.length; i++) {
+      var o = objs[i];
+      if (o.kind === 'sphere' || o.kind === 'snowman') {
+        if (ns < 16) {
+          S[ns * 4] = o.pos[0]; S[ns * 4 + 1] = o.pos[1]; S[ns * 4 + 2] = o.pos[2]; S[ns * 4 + 3] = o.r;
+          ns++;
+        }
+      } else if (o.kind === 'building' || o.kind === 'car' ||
+                 o.kind === 'tree' || o.kind === 'house') {
+        if (nb < 40) {
+          B[nb * 4] = o.pos[0]; B[nb * 4 + 1] = o.pos[1]; B[nb * 4 + 2] = o.pos[2]; B[nb * 4 + 3] = o.rot || 0;
+          BH[nb * 3] = o.size[0]; BH[nb * 3 + 1] = o.size[1]; BH[nb * 3 + 2] = o.size[2];
+          nb++;
+        }
+      } else if (o.kind === 'field') {
+        if (nf < 8) {
+          F[nf * 4] = o.pos[0]; F[nf * 4 + 1] = o.pos[1]; F[nf * 4 + 2] = o.pos[2]; F[nf * 4 + 3] = o.radius;
+          var mi = o.mode === 'attract' ? 1 : (o.mode === 'accelerate' ? 2 : (o.mode === 'drag' ? 3 : 0));
+          FP[nf * 4] = o.strength; FP[nf * 4 + 1] = mi;
+          FD[nf * 4] = o.dir[0]; FD[nf * 4 + 1] = o.dir[1]; FD[nf * 4 + 2] = o.dir[2];
+          nf++;
+        }
+      } else if (o.kind === 'portal') {
+        byId[o.id] = o;
+      }
+    }
+
+    for (var k = 0; k < objs.length; k++) {
+      var a = objs[k];
+      if (a.kind !== 'portal' || np >= 4) continue;
+      if (!a.link || String(a.id) > String(a.link)) continue;
+      var b = byId[a.link];
+      if (!b) continue;
+      PA[np * 4] = a.pos[0]; PA[np * 4 + 1] = a.pos[1]; PA[np * 4 + 2] = a.pos[2]; PA[np * 4 + 3] = a.r;
+      PB[np * 4] = b.pos[0]; PB[np * 4 + 1] = b.pos[1]; PB[np * 4 + 2] = b.pos[2]; PB[np * 4 + 3] = b.r;
+      PAn[np * 4] = a.normal[0]; PAn[np * 4 + 1] = a.normal[1]; PAn[np * 4 + 2] = a.normal[2];
+      PBn[np * 4] = b.normal[0]; PBn[np * 4 + 1] = b.normal[1]; PBn[np * 4 + 2] = b.normal[2];
+      np++;
+    }
+
+    this.counts.sph = ns;
+    this.counts.box = nb;
+    this.counts.field = nf;
+    this.counts.portal = np;
+  };
+
   FluidSim.prototype._collisionUniforms = function (gl, p) {
-    GL.u3fv(gl, p, 'uBoxMin', this.boxMin);
-    GL.u3fv(gl, p, 'uBoxMax', this.boxMax);
-    GL.u1f(gl, p, 'uWallTop', this.wallTop);
+    var L = this.level;
+    GL.u1i(gl, p, 'uLevelKind', this.levelKind());
+    var mn = L.min || [-1, -1, -1];
+    var mx = L.max || [1, 0.9, 1];
+    GL.u3f(gl, p, 'uBoxMin', mn[0], mn[1], mn[2]);
+    GL.u3f(gl, p, 'uBoxMax', mx[0], mx[1], mx[2]);
+    GL.u1f(gl, p, 'uWallTop', L.wallTop === undefined ? 0.9 : L.wallTop);
+    var c = L.center || [0, 0, 0];
+    GL.u3f(gl, p, 'uSphereC', c[0], c[1], c[2]);
+    GL.u1f(gl, p, 'uSphereR', L.radius === undefined ? 1.16 : L.radius);
     GL.u1f(gl, p, 'uPRadius', this.pRadius);
 
-    var sph = new Float32Array(32);
-    var ns = Math.min(this.obstacles.sph.length, 8);
-    for (var i = 0; i < ns; i++) {
-      var o = this.obstacles.sph[i];
-      sph[i * 4] = o.c[0]; sph[i * 4 + 1] = o.c[1]; sph[i * 4 + 2] = o.c[2]; sph[i * 4 + 3] = o.r;
-    }
-    GL.u4fv(gl, p, 'uSph', sph);
-    GL.u1i(gl, p, 'uSphCount', ns);
+    GL.u4fv(gl, p, 'uSph', this.uSph);
+    GL.u1i(gl, p, 'uSphCount', this.counts.sph);
+    GL.u4fv(gl, p, 'uObsBox', this.uBox);
+    GL.u3fv(gl, p, 'uObsBoxHalf', this.uBoxHalf);
+    GL.u1i(gl, p, 'uObsBoxCount', this.counts.box);
+  };
 
-    var bx = new Float32Array(16);
-    var bh = new Float32Array(12);
-    var nb = Math.min(this.obstacles.box.length, 4);
-    for (var j = 0; j < nb; j++) {
-      var b = this.obstacles.box[j];
-      bx[j * 4] = b.c[0]; bx[j * 4 + 1] = b.c[1]; bx[j * 4 + 2] = b.c[2]; bx[j * 4 + 3] = 0;
-      bh[j * 3] = b.h[0]; bh[j * 3 + 1] = b.h[1]; bh[j * 3 + 2] = b.h[2];
-    }
-    GL.u4fv(gl, p, 'uObsBox', bx);
-    GL.u3fv(gl, p, 'uObsBoxHalf', bh);
-    GL.u1i(gl, p, 'uObsBoxCount', nb);
+  FluidSim.prototype._fieldUniforms = function (gl, p) {
+    GL.u4fv(gl, p, 'uField', this.uField);
+    GL.u4fv(gl, p, 'uFieldP', this.uFieldP);
+    GL.u4fv(gl, p, 'uFieldDir', this.uFieldDir);
+    GL.u1i(gl, p, 'uFieldCount', this.counts.field);
+    GL.u4fv(gl, p, 'uPortalA', this.uPortalA);
+    GL.u4fv(gl, p, 'uPortalB', this.uPortalB);
+    GL.u4fv(gl, p, 'uPortalAn', this.uPortalAn);
+    GL.u4fv(gl, p, 'uPortalBn', this.uPortalBn);
+    GL.u1i(gl, p, 'uPortalCount', this.counts.portal);
   };
 
   FluidSim.prototype._draw = function (fbo, prog) {
@@ -448,7 +624,8 @@
     var gl = this.gl;
     var p, i;
 
-    // --- предсказание ---
+    this._packScene();
+
     p = this.prog.predict;
     gl.useProgram(p.program);
     GL.bindTex(gl, p, 'uPos', this.pos.tex, 0);
@@ -458,15 +635,15 @@
     GL.u1f(gl, p, 'uDt', dt);
     GL.u1f(gl, p, 'uMaxSpeed', this.maxSpeed);
     GL.u3f(gl, p, 'uGravity', 0, this.gravity, 0);
-    GL.u4fv(gl, p, 'uBuoy', this.buoy);
+    GL.u1fv(gl, p, 'uBuoy', this.buoy);
     GL.u4f(gl, p, 'uMouse', this.mouse.pos[0], this.mouse.pos[1], this.mouse.pos[2], this.mouse.radius);
     GL.u3fv(gl, p, 'uMouseForce', this.mouse.force);
     GL.u1f(gl, p, 'uVortex', this.vortex || 0);
+    this._fieldUniforms(gl, p);
     this._draw(this.predA.fbo, p);
 
     var predSrc = this.predA, predDst = this.predB;
 
-    // --- итерации решателя ---
     for (i = 0; i < this.iterations; i++) {
       p = this.prog.density;
       gl.useProgram(p.program);
@@ -479,7 +656,7 @@
       GL.u1f(gl, p, 'uH2', this.h * this.h);
       GL.u1f(gl, p, 'uPoly6', this.kPoly6);
       GL.u1f(gl, p, 'uSpikyK', this.kSpiky);
-      GL.u4fv(gl, p, 'uSpacing', this.spacing);
+      GL.u1fv(gl, p, 'uSpacing', this.spacing);
       GL.u1f(gl, p, 'uEps', this.eps);
       GL.u1f(gl, p, 'uCMin', this.cMin);
       GL.u1f(gl, p, 'uLamMax', this.lamMax);
@@ -498,7 +675,7 @@
       GL.u1f(gl, p, 'uH2', this.h * this.h);
       GL.u1f(gl, p, 'uPoly6', this.kPoly6);
       GL.u1f(gl, p, 'uSpikyK', this.kSpiky);
-      GL.u4fv(gl, p, 'uSpacing', this.spacing);
+      GL.u1fv(gl, p, 'uSpacing', this.spacing);
       GL.u1f(gl, p, 'uSCorrK', this.sCorrK);
       GL.u1f(gl, p, 'uMaxDp', this.h * 0.25);
       this._draw(predDst.fbo, p);
@@ -506,7 +683,6 @@
       var tmp = predSrc; predSrc = predDst; predDst = tmp;
     }
 
-    // --- скорость + финальная позиция (MRT) ---
     p = this.prog.velocity;
     gl.useProgram(p.program);
     GL.bindTex(gl, p, 'uPos', this.pos.tex, 0);
@@ -522,13 +698,10 @@
     GL.u1f(gl, p, 'uSpikyK', this.kSpiky);
     GL.u4fv(gl, p, 'uSpacing', this.spacing);
     GL.u1f(gl, p, 'uDt', dt);
-
-    // вязкость и т.п.
     GL.u4fv(gl, p, 'uVisc', this.visc);
     GL.u1f(gl, p, 'uViscScale', this.viscScale === undefined ? 1.0 : this.viscScale);
     GL.u1f(gl, p, 'uMaxSpeed', this.maxSpeed);
 
-    // ВАЖНО: после свапа текстур перепривязываем MRT-аттачменты
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.mrt);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.posB.tex, 0);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.velB.tex, 0);

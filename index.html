@@ -34,58 +34,80 @@
   </div>
 
   <div class="scroll">
-    <section>
-      <h2>Источники</h2>
-      <div id="sources"></div>
-    </section>
+    <details open>
+      <summary>Уровень</summary>
+      <div class="sec-body" id="levels"></div>
+    </details>
 
-    <section>
-      <h2>Физика</h2>
-      <div id="phys"></div>
-    </section>
+    <details open>
+      <summary>Небо и фон</summary>
+      <div class="sec-body" id="skies"></div>
+    </details>
 
-    <section>
-      <h2>Жидкости</h2>
-      <div id="fluids"></div>
-    </section>
+    <details open>
+      <summary>Источники</summary>
+      <div class="sec-body" id="sources"></div>
+    </details>
 
-    <section>
-      <h2>Сцена</h2>
-      <div class="btnrow">
-        <button class="btn" id="btn-obst-sphere">+ Сфера</button>
-        <button class="btn" id="btn-obst-box">+ Куб</button>
+    <details open>
+      <summary>Объекты сцены</summary>
+      <div class="sec-body" id="objects"></div>
+    </details>
+
+    <details open>
+      <summary>Физика</summary>
+      <div class="sec-body" id="phys"></div>
+    </details>
+
+    <details>
+      <summary>Производительность</summary>
+      <div class="sec-body" id="perf"></div>
+    </details>
+
+    <details open>
+      <summary>Сцена</summary>
+      <div class="sec-body">
+        <div class="btnrow">
+          <button class="btn primary" id="btn-reset">Сброс жидкости</button>
+          <button class="btn" id="btn-pause">Пауза</button>
+        </div>
+        <div class="btnrow">
+          <button class="btn" id="btn-rotate">Авто-вращение</button>
+          <button class="btn" id="btn-preset">Водоворот</button>
+        </div>
+        <div class="btnrow">
+          <button class="btn" id="btn-clear">Убрать объекты</button>
+        </div>
+        <div class="btnrow">
+          <button class="btn" id="btn-resetall">Сбросить настройки</button>
+        </div>
       </div>
-      <div class="btnrow">
-        <button class="btn" id="btn-obst-clear">Убрать препятствия</button>
-      </div>
-      <div class="btnrow">
-        <button class="btn primary" id="btn-reset">Сброс</button>
-        <button class="btn" id="btn-pause">Пауза</button>
-      </div>
-      <div class="btnrow">
-        <button class="btn" id="btn-rotate">Авто-вращение</button>
-        <button class="btn" id="btn-preset">Водоворот</button>
-      </div>
-    </section>
+    </details>
   </div>
 
   <footer>
     <span>ЛКМ — орбита · КОЛЕСО — зум</span>
-    <span>ПКМ / Shift — толкать жидкость</span>
+    <span>ПКМ / Shift — толкать · клик по объекту — стрелки</span>
   </footer>
 </div>
 
+<div id="inspector"></div>
+
 <button id="expand" title="Показать панель">›</button>
 
-<div id="hint">Потяните мышью, чтобы вращать камеру</div>
+<div id="hint">Кликните по объекту, чтобы двигать его стрелками</div>
 
 <div id="error" hidden></div>
 
 <script src="js/math.js"></script>
 <script src="js/gl.js"></script>
+<script src="js/world.js"></script>
+<script src="js/store.js"></script>
+<script src="js/gizmo.js"></script>
 <script src="js/shaders.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/render.js"></script>
+<script src="js/ui.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

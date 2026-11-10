@@ -108,6 +108,7 @@
   GL.u3f = function (gl, p, n, a, b, c) { var l = p.u[n]; if (l != null) gl.uniform3f(l, a, b, c); };
   GL.u4f = function (gl, p, n, a, b, c, d) { var l = p.u[n]; if (l != null) gl.uniform4f(l, a, b, c, d); };
   GL.u4fv = function (gl, p, n, arr) { var l = p.u[n]; if (l != null) gl.uniform4fv(l, arr); };
+  GL.u1fv = function (gl, p, n, arr) { var l = p.u[n]; if (l != null) gl.uniform1fv(l, arr); };
   GL.u3fv = function (gl, p, n, arr) { var l = p.u[n]; if (l != null) gl.uniform3fv(l, arr); };
   GL.um4 = function (gl, p, n, m) { var l = p.u[n]; if (l != null) gl.uniformMatrix4fv(l, false, m); };
 

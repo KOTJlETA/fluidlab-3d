@@ -511,7 +511,11 @@ void main() {
   dv /= n0;
   if (fluid) {
     float visc = uVisc[ti];
-    v += dv * visc * uViscScale;
+    // устойчивая диффузия: коэффициент ограничен, иначе густая жидкость «взрывается»
+    float k = clamp(visc * uViscScale, 0.0, 0.82);
+    v += dv * k;
+    // дополнительное затухание для очень густых жидкостей (лава, слизь)
+    if (visc > 1.0) v *= 1.0 / (1.0 + (visc - 1.0) * 0.55 * uDt);
   } else {
     // сыпучие частицы не вязкие: гасим скорость и добавляем трение о пол
     v *= 1.0 / (1.0 + uDragK[ti] * uDt);
@@ -581,7 +585,8 @@ void main() {
     return;
   }
   gl_Position = uProj * vp;
-  gl_PointSize = clamp(uRadius * uRadScale[t] * uPointScale / max(vDepth, 0.02), 1.0, 128.0);
+  float maxPx = uPass > 1.5 ? 9.0 : 128.0;   // сыпучие/дождь — мелкие точки, без «пузырей»
+  gl_PointSize = clamp(uRadius * uRadScale[t] * uPointScale / max(vDepth, 0.02), 1.0, maxPx);
   vR = uRadius * uRadScale[t];
 }`;
 
@@ -793,15 +798,16 @@ void main() {
   fragColor = vec4(outc, 1.0);
 }`;
 
-  /* ---------- объёмные облака внутри сцены ---------- */
+  /* ---------- объёмные облака: кучевые «кочаны» внутри сцены ---------- */
 
   SH.cloudVS = `#version 300 es
 precision highp float;
 layout(location = 0) in vec3 aPos;
 uniform mat4 uMVP;
+uniform mat4 uModel;
 out vec3 vW;
 void main() {
-  vW = aPos;
+  vW = (uModel * vec4(aPos, 1.0)).xyz;
   gl_Position = uMVP * vec4(aPos, 1.0);
 }`;
 
@@ -809,10 +815,10 @@ void main() {
 precision highp float;
 in vec3 vW;
 uniform vec3 uCamPos;
+uniform vec3 uPuffPos;
+uniform float uPuffR;
 uniform float uTime;
-uniform float uCloudY0;
-uniform float uCloudY1;
-uniform float uCloudScale;
+uniform vec3 uTint;
 out vec4 oOut;
 
 float hash31(vec3 p) {
@@ -836,52 +842,60 @@ float noise3(vec3 x) {
 }
 float fbm3(vec3 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < 2; i++) { v += a * noise3(p); p *= 2.11; a *= 0.5; }
-  return v * 1.34;
+  for (int i = 0; i < 3; i++) { v += a * noise3(p); p *= 2.13; a *= 0.5; }
+  return v * 1.4;
 }
+
+// плотность внутри одного «кочана»: шар с рваной поверхностью
 float density(vec3 p, float t) {
-  vec3 q = vec3(p.x, p.y * 1.9, p.z) * uCloudScale + vec3(t * 0.35, 0.0, t * 0.22);
-  float d = fbm3(q);
-  float th = max(0.25, uCloudY1 - uCloudY0);
-  float vf = smoothstep(uCloudY0, uCloudY0 + 0.28 * th, p.y) *
-             (1.0 - smoothstep(uCloudY1 - 0.38 * th, uCloudY1, p.y));
-  return clamp((d - 0.50) * 3.2, 0.0, 1.0) * vf;
+  vec3 q = (p - uPuffPos) / uPuffR;
+  float r = length(q);
+  if (r > 1.15) return 0.0;
+  vec3 nq = q * 2.3 + vec3(t * 0.02, t * 0.014, -t * 0.018);
+  float n = fbm3(nq);
+  // внизу облако плоское, сверху пышное
+  float flatN = 1.0 - smoothstep(-0.25, 1.05, q.y);
+  float shape = 1.0 - smoothstep(0.30, 1.0, r + (n - 0.5) * 0.85);
+  return clamp(shape * (0.65 + 0.55 * flatN), 0.0, 1.0);
 }
 
 void main() {
-  vec3 rd = vW - uCamPos;
-  float dist = length(rd);
-  if (dist < 1e-3) discard;
-  rd /= dist;
+  vec3 ro = uCamPos;
+  vec3 rd = normalize(vW - ro);
 
-  // отрезок луча внутри слоя
-  float t0 = (uCloudY0 - uCamPos.y) / (abs(rd.y) < 1e-4 ? 1e-4 : rd.y);
-  float t1 = (uCloudY1 - uCamPos.y) / (abs(rd.y) < 1e-4 ? 1e-4 : rd.y);
-  float s0 = max(min(t0, t1), 0.0);
-  float s1 = min(max(t0, t1), dist);
-  if (s1 <= s0) discard;
+  // пересечение луча со сферой облака
+  vec3 oc = ro - uPuffPos;
+  float b = dot(rd, oc);
+  float c = dot(oc, oc) - uPuffR * uPuffR * 1.1;
+  float disc = b * b - c;
+  if (disc < 0.0) discard;
+  float sq = sqrt(disc);
+  float t0 = max(-b - sq, 0.0);
+  float t1 = -b + sq;
+  if (t1 <= t0) discard;
 
-  const int STEPS = 9;
-  float dt = (s1 - s0) / float(STEPS);
+  const int STEPS = 14;
+  float dt = (t1 - t0) / float(STEPS);
   float T = 1.0;
   vec3 acc = vec3(0.0);
-  vec3 L = normalize(vec3(0.45, 0.78, 0.30));
+  vec3 L = normalize(vec3(0.45, 0.80, 0.28));
 
   for (int i = 0; i < STEPS; i++) {
-    vec3 sp = uCamPos + rd * (s0 + dt * (float(i) + 0.5));
+    vec3 sp = ro + rd * (t0 + dt * (float(i) + 0.5));
     float d = density(sp, uTime);
-    if (d > 0.004) {
-      float ld = density(sp + L * 2.2, uTime);
-      float lit = clamp(1.0 - ld * 1.6, 0.08, 1.0);
-      vec3 cc = mix(vec3(0.26, 0.30, 0.38), vec3(1.04, 1.01, 0.96), lit);
-      cc = mix(cc, vec3(0.60, 0.68, 0.80), 0.32);
-      float a = clamp(d * 0.16, 0.0, 0.85);
+    if (d > 0.01) {
+      float ld = density(sp + L * uPuffR * 0.45, uTime);
+      float lit = clamp(1.0 - ld * 1.5, 0.10, 1.0);
+      // тень в нижней части облака
+      float under = clamp(0.55 + 0.55 * (sp.y - uPuffPos.y) / uPuffR, 0.0, 1.0);
+      vec3 cc = mix(vec3(0.42, 0.47, 0.56), vec3(1.06, 1.03, 0.99), lit * under);
+      cc *= uTint;
+      float a = clamp(d * 0.30, 0.0, 0.92);
       acc += cc * a * T;
       T *= (1.0 - a);
-      if (T < 0.02) break;
+      if (T < 0.03) break;
     }
   }
-  // премультиплицированный альфа-блендинг
   oOut = vec4(acc, 1.0 - T);
 }`;
 

@@ -10,14 +10,14 @@
      fluid: false — сыпучая частица: своя баллистика, трение, никакого давления */
 
   World.TYPES = [
-    { key: 'water', css: '#2173d1', fluid: true, spacing: 0.082, visc: 0.10, buoy: 0.0, grav: 1.0, drag: 0.0 },
-    { key: 'oil', css: '#a86a1a', fluid: true, spacing: 0.094, visc: 0.30, buoy: 0.35, grav: 1.0, drag: 0.0 },
-    { key: 'lava', css: '#ff5210', fluid: true, spacing: 0.075, visc: 0.55, buoy: -0.9, grav: 1.0, drag: 0.0 },
-    { key: 'slime', css: '#33d961', fluid: true, spacing: 0.086, visc: 0.85, buoy: 0.0, grav: 1.0, drag: 0.0 },
+    { key: 'water', css: '#2173d1', fluid: true, spacing: 0.082, visc: 0.06, buoy: 0.0, grav: 1.0, drag: 0.0 },
+    { key: 'oil', css: '#a86a1a', fluid: true, spacing: 0.094, visc: 0.35, buoy: 0.35, grav: 1.0, drag: 0.0 },
+    { key: 'lava', css: '#ff5210', fluid: true, spacing: 0.075, visc: 8.0, buoy: -0.9, grav: 1.0, drag: 0.0 },
+    { key: 'slime', css: '#33d961', fluid: true, spacing: 0.086, visc: 2.4, buoy: 0.0, grav: 1.0, drag: 0.0 },
     { key: 'snow', css: '#eef4ff', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.12, drag: 3.4 },
     { key: 'sand', css: '#d9c48a', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.95, drag: 0.7 },
     { key: 'dust', css: '#b9b2a6', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.10, drag: 3.2 },
-    { key: 'rain', css: '#8fb6d8', fluid: true, spacing: 0.075, visc: 0.04, buoy: 0.0, grav: 1.0, drag: 0.0, rad: 0.20 }
+    { key: 'rain', css: '#8aa2b4', fluid: false, spacing: 0.075, visc: 0.0, buoy: 0.0, grav: 1.0, drag: 0.35, rad: 0.17 }
   ];
   World.typeName = function (i) { return T('type.' + World.TYPES[i].key); };
 
@@ -578,32 +578,23 @@
   }
 
   var SCEN = {
-    /* Потоп: один мощный вертикальный поток */
-    flood: function (L) {
-      var H = L.half, top = L.wallTop;
-      return [
-        src([-0.12 * H, top * 0.92, 0.10 * H], [0, -1, 0], 0.055, 1.5, 0, 460)
-      ];
-    },
-
     /* Цунами: валы бьют горизонтально с четырёх стен */
     tsunami: function (L) {
       var H = L.half;
-      var y = L.min[1] + (L.wallTop - L.min[1]) * 0.22;
+      var y = L.min[1] + (L.wallTop - L.min[1]) * 0.16;
+      // один вал во всю стену
       return [
-        src([-H * 0.97, y, 0], [1, 0, 0], 0.075, 2.4, 0, 900),
-        src([H * 0.97, y, 0], [-1, 0, 0], 0.075, 2.4, 0, 900),
-        src([0, y, -H * 0.97], [0, 0, 1], 0.065, 2.2, 0, 700),
-        src([0, y, H * 0.97], [0, 0, -1], 0.065, 2.2, 0, 700)
+        src([-H * 0.99, y, 0], [1, 0, 0], H * 0.98, 3.8, 0, 2600)
       ];
     },
 
     /* Ливень: один широкий медленный поток сверху */
     rain: function (L) {
-      var top = L.wallTop;
       // сопло размером во весь уровень: капли падают по всей площади, а не из трубы
+      // для острова — выше вершины, иначе капли рождаются внутри горы
+      var y = L.terrain ? (L.floorY + L.cone.h + 9.5) : L.wallTop * 1.6;
       return [
-        src([0, top * 0.94, 0], [0, -1, 0], L.half * 1.06, 0.7, 7, 4200)
+        src([0, y, 0], [0, -1, 0], L.half * 1.06, 0.7, 7, 2800)
       ];
     },
 
@@ -644,15 +635,6 @@
       ];
     },
 
-    /* Боковой выброс: лава течёт по склону вниз */
-    lavaflow: function (L) {
-      var s = L.scale;
-      var y = L.floorY + L.cone.h * 0.62;
-      return [
-        src([L.cone.r0 * 0.30, y, 0], [0.75, 0.35, 0.25], 0.18, 2.4, 2, 1100)
-      ];
-    },
-
     /* Портальная петля: струя уходит в портал и гоняется по кругу */
     portaljet: function (L) {
       var y = L.floorY;
@@ -672,11 +654,11 @@
   };
 
   World.SCENARIOS = {
-    city_mini: ['flood', 'sewer', 'tsunami', 'rain', 'mix'],
-    city_mid: ['flood', 'sewer', 'tsunami', 'rain', 'mix'],
-    city_big: ['flood', 'sewer', 'tsunami', 'rain', 'mix'],
+    city_mini: ['tsunami', 'sewer', 'rain', 'mix'],
+    city_mid: ['tsunami', 'sewer', 'rain', 'mix'],
+    city_big: ['tsunami', 'sewer', 'rain', 'mix'],
     sphere: ['snowfall'],
-    volcano: ['eruption', 'lavaflow', 'rain'],
+    volcano: ['eruption', 'rain'],
     portal: ['portaljet']
   };
 
@@ -685,13 +667,22 @@
   World.buildScenario = function (key, levelKey) {
     SID = 0;
     var L = World.LEVELS[levelKey] || World.LEVELS.city_mini;
-    var fn = SCEN[key] || SCEN.flood;
-    return fn(L);
+    // сценарий мог исчезнуть из списка — берём первый доступный для уровня
+    var list = World.SCENARIOS[levelKey] || [];
+    var k = list.indexOf(key) >= 0 ? key : list[0];
+    var fn = SCEN[k] || SCEN.rain || SCEN.eruption;
+    return fn ? fn(L) : [];
   };
 
   World.defaultScenario = function (levelKey) {
     var list = World.SCENARIOS[levelKey];
-    return (list && list[0]) || 'flood';
+    return (list && list[0]) || 'rain';
+  };
+
+  // валиден ли сценарий для уровня
+  World.validScenario = function (levelKey, key) {
+    var list = World.SCENARIOS[levelKey] || [];
+    return list.indexOf(key) >= 0 ? key : list[0];
   };
 
   World.defaultSources = function (levelKey, scenarioKey) {
@@ -920,21 +911,40 @@
       if (sub < 0) sub = 0; else if (sub > 1) sub = 1;
 
       var v = o.vel;
-      var buoy = 19.5;
-      v[1] += (buoy * sub - g * (1 - sub * 0.8)) * dt;
 
-      var k = 4.2 * sub;
+      // машина НЕ плавает: только гравитация и пол, вода её толкает и опрокидывает
+      v[1] -= g * dt;
+
+      var k = 3.6 * sub;
       v[0] += (smp.vx - v[0]) * k * dt;
       v[2] += (smp.vz - v[2]) * k * dt;
-      v[1] += (smp.vy - v[1]) * k * 0.35 * dt;
 
-      var yawTarget = (smp.vx * Math.cos(o.yaw) - smp.vz * Math.sin(o.yaw)) * 1.4;
+      // кувырок: продольный поток валит носом, поперечный — на бок
+      var fx = Math.sin(o.yaw), fz = Math.cos(o.yaw);
+      var along = smp.vx * fx + smp.vz * fz;
+      var side = smp.vx * fz - smp.vz * fx;
+      o.tilt = o.tilt || 0; o.roll = o.roll || 0;
+      o.tiltVel = (o.tiltVel || 0) + (along * 2.6 - o.tilt * 3.0) * sub * dt;
+      o.rollVel = (o.rollVel || 0) + (side * 2.6 - o.roll * 3.0) * sub * dt;
+      o.tilt = Math.max(-3.14, Math.min(3.14, o.tilt + o.tiltVel * dt));
+      o.roll = Math.max(-3.14, Math.min(3.14, o.roll + o.rollVel * dt));
+      o.tiltVel *= (1 - 1.6 * dt);
+      o.rollVel *= (1 - 1.6 * dt);
+      if (sub < 0.06) {
+        o.tilt *= (1 - 2.2 * dt);
+        o.roll *= (1 - 2.2 * dt);
+        o.tiltVel *= (1 - 3.0 * dt);
+        o.rollVel *= (1 - 3.0 * dt);
+      }
+
+      // рыскание: поток разворачивает корпус
+      var yawTarget = (smp.vx * Math.cos(o.yaw) - smp.vz * Math.sin(o.yaw)) * 1.2 * sub;
       o.yawVel += (yawTarget - o.yawVel) * 3.0 * dt;
       o.yaw += o.yawVel * dt;
 
       v[0] *= (1 - 0.9 * dt);
       v[2] *= (1 - 0.9 * dt);
-      if (sub < 0.05) v[1] *= (1 - 0.2 * dt);
+      if (sub < 0.05) { v[0] *= (1 - 4.0 * dt); v[2] *= (1 - 4.0 * dt); }
 
       o.pos[0] += v[0] * dt;
       o.pos[1] += v[1] * dt;

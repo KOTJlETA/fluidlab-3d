@@ -213,7 +213,7 @@
     // в ливень камера ниже — видно небо с облаками
     var LV = World.LEVELS[App.state.level];
     var basePhi = (LV && LV.camPhi) || 0.98;
-    cam.phi = (key === 'rain') ? Math.max(basePhi, 1.24) : basePhi;
+    cam.phi = (key === 'rain') ? Math.max(basePhi, 1.38) : basePhi;
     var vb = document.getElementById('btn-preset');
     if (vb) vb.classList.toggle('active', App.vortex);
     App.select(null);
@@ -347,8 +347,10 @@
   var keys = Object.create(null);
   window.addEventListener('keydown', function (e) {
     var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
-    var isRange = tag === 'input' && e.target.type === 'range';
-    if (!isRange && /input|textarea|select/.test(tag)) return;
+    var typ = tag === 'input' ? (e.target.type || 'text') : '';
+    var isText = tag === 'textarea' || tag === 'select' ||
+      (tag === 'input' && /text|number|search|email|password|url|tel/.test(typ));
+    if (isText) return;
     var kk = e.key.toLowerCase();
     keys[kk] = true;
     if (kk === ' ') keys['space'] = true;

@@ -448,6 +448,29 @@
     this.terrainIdx = I.length;
   };
 
+  // кучевые облака: набор «кочанов» над уровнем
+  Renderer.prototype._buildClouds = function (level) {
+    var list = [];
+    var H = level.half || 4;
+    var base = level.terrain ? 9.5 : Math.max(2.6, (level.wallTop || 1.6) * 2.1);
+    var seed = 1;
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+    var n = level.terrain ? 18 : 14;
+    for (var i = 0; i < n; i++) {
+      var ang = (i / n) * Math.PI * 2 + rnd() * 0.5;
+      var rad = H * (0.55 + rnd() * 1.05);
+      var y = base + rnd() * (level.terrain ? 15 : 5.5);
+      var r = (level.terrain ? 4.4 : 2.3) * (0.78 + rnd() * 0.75);
+      list.push({
+        p: [Math.cos(ang) * rad, y, Math.sin(ang) * rad],
+        r: r,
+        yaw: rnd() * 6.283,
+        tint: [0.94 + rnd() * 0.10, 0.96 + rnd() * 0.07, 1.0]
+      });
+    }
+    this.puffs = list;
+  };
+
   Renderer.prototype._buildGeometry = function () {
     var gl = this.gl;
 
@@ -547,11 +570,6 @@
     this.palm = this._uploadMesh(this.palmTpl);
 
     // облака: большой горизонтальный квад для реймарча
-    var cq = [], cqn = [], cqc = [], cqi = [];
-    var CS = 260;
-    pushBox(cq, cqn, cqc, cqi, 0, 0, 0, CS, 0.001, CS, [1, 1, 1]);
-    this.cloudQuad = this._uploadMesh(meshData(cq, cqn, cqc, new Uint16Array(cqi)));
-
     // здания: объединённый меш (один draw call на весь город)
     var bp = [], bn = [], bc = [], bi = [];
     pushBox(bp, bn, bc, bi, 0, 0, 0, 1, 1, 1, [1, 1, 1]);
@@ -770,6 +788,28 @@
     return m;
   }
 
+  // полная ориентация: рыскание, тангаж, крен
+  function modelRot(x, y, z, yaw, pitch, roll, sx, sy, sz) {
+    var cy = Math.cos(yaw || 0), sy2 = Math.sin(yaw || 0);
+    var cx = Math.cos(pitch || 0), sx2 = Math.sin(pitch || 0);
+    var cz = Math.cos(roll || 0), sz2 = Math.sin(roll || 0);
+    var m = new Float32Array(16);
+    m[0] = (cy * cz + sy2 * sx2 * sz2) * sx;
+    m[1] = (cx * sz2) * sx;
+    m[2] = (-sy2 * cz + cy * sx2 * sz2) * sx;
+    m[3] = 0;
+    m[4] = (-cy * sz2 + sy2 * sx2 * cz) * sy;
+    m[5] = (cx * cz) * sy;
+    m[6] = (sy2 * sz2 + cy * sx2 * cz) * sy;
+    m[7] = 0;
+    m[8] = (sy2 * cx) * sz;
+    m[9] = (-sx2) * sz;
+    m[10] = (cy * cx) * sz;
+    m[11] = 0;
+    m[12] = x; m[13] = y; m[14] = z; m[15] = 1;
+    return m;
+  }
+
   function modelFromNormal(x, y, z, n, scale) {
     var nx = n[0], ny = n[1], nz = n[2];
     var l = Math.hypot(nx, ny, nz) || 1;
@@ -819,6 +859,7 @@
     var gl = this.gl;
     var W = this.W, H = this.H;
     var level = sim.level;
+    if (this._cloudLevel !== level) { this._cloudLevel = level; this._buildClouds(level); }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.rtScene.fbo);
     gl.viewport(0, 0, W, H);
@@ -1031,7 +1072,8 @@
         gl.bindVertexArray(this.cube.vao);
         gl.drawElements(gl.TRIANGLES, this.cube.count, gl.UNSIGNED_SHORT, 0);
       } else if (o.kind === 'car') {
-        var mc = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[2]);
+        var mc = modelRot(o.pos[0], o.pos[1], o.pos[2], o.rot || 0,
+          o.tilt || 0, o.roll || 0, o.size[0], o.size[1], o.size[2]);
         GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mc));
         GL.um4(gl, p, 'uModel', mc);
         GL.u3fv(gl, p, 'uColor', o.color);
@@ -1149,26 +1191,36 @@
       gl.disable(gl.DEPTH_TEST);
     }
 
-    // объёмные облака внутри сцены
-    if (this.clouds) {
+    // объёмные облака: кучевые «кочаны» внутри сцены
+    if (this.clouds && this.puffs && this.puffs.length) {
       var pc = this.progs.cloud;
       gl.useProgram(pc.program);
-      var cy = level.terrain ? 7.2 : 1.30;
-      var thick = level.terrain ? 3.8 : 0.85;
-      // квад — на нижней границе слоя: луч проходит слой целиком
-      var mcl = modelTRS(0, cy - thick, 0, 0, 1, 1, 1);
-      GL.um4(gl, pc, 'uMVP', M.multiply(M.create(), vp, mcl));
       GL.u3f(gl, pc, 'uCamPos', cam.eye[0], cam.eye[1], cam.eye[2]);
       GL.u1f(gl, pc, 'uTime', this.time);
-      GL.u1f(gl, pc, 'uCloudY0', cy - thick);
-      GL.u1f(gl, pc, 'uCloudY1', cy);
-      GL.u1f(gl, pc, 'uCloudScale', 0.52 / Math.max(2, level.half));
+      var order = this.puffs.map(function (q, i) {
+        var dx = q.p[0] - cam.eye[0], dy = q.p[1] - cam.eye[1], dz = q.p[2] - cam.eye[2];
+        return { i: i, d: dx * dx + dy * dy + dz * dz };
+      }).sort(function (a, b) { return b.d - a.d; });
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(false);
-      gl.bindVertexArray(this.cloudQuad.vao);
-      gl.drawElements(gl.TRIANGLES, this.cloudQuad.count, gl.UNSIGNED_SHORT, 0);
+      gl.enable(gl.CULL_FACE);
+      gl.cullFace(gl.FRONT);
+      gl.bindVertexArray(this.cube.vao);
+      for (var pi = 0; pi < order.length; pi++) {
+        var pf = this.puffs[order[pi].i];
+        var rr = pf.r * 1.14;
+        var mcl = modelTRS(pf.p[0], pf.p[1], pf.p[2], pf.yaw, rr, rr, rr);
+        GL.um4(gl, pc, 'uMVP', M.multiply(M.create(), vp, mcl));
+        GL.um4(gl, pc, 'uModel', mcl);
+        GL.u3f(gl, pc, 'uPuffPos', pf.p[0], pf.p[1], pf.p[2]);
+        GL.u1f(gl, pc, 'uPuffR', pf.r);
+        GL.u3f(gl, pc, 'uTint', pf.tint[0], pf.tint[1], pf.tint[2]);
+        gl.drawElements(gl.TRIANGLES, this.cube.count, gl.UNSIGNED_SHORT, 0);
+      }
+      gl.cullFace(gl.BACK);
+      gl.disable(gl.CULL_FACE);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.DEPTH_TEST);

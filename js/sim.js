@@ -310,7 +310,7 @@
 
     var nx = Math.floor((lim * 2) / sp);
     var ny = Math.floor(0.95 * scl / sp);
-    var frac = L.kind === 'sphere' ? 0 : 0.16;
+    var frac = (L.frac === undefined) ? (L.kind === 'sphere' ? 0 : 0.16) : L.frac;
     var want = Math.min(Math.floor(N * frac), nx * ny * nx);
     var placed = 0;
     for (var yy = 0; yy < ny && placed < want; yy++) {

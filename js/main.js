@@ -184,6 +184,7 @@
     var L = World.LEVELS[key];
     if (L.camDist) cam.dist = L.camDist;
     if (L.camPhi) cam.phi = L.camPhi;
+    cam.target = [0, -0.10 * (sim.scale || 1), 0];
     App.state.level = key;
     App.state.skybox = L.sky;
     App.state.objects = World.defaultObjects(key);
@@ -368,11 +369,16 @@
   function flyCamera(dt) {
     var b = cam.basis();
     var sp = cam.dist * 0.55 * dt;
+    // идём по земле: WASD не закапывает камеру в пол, высота — Space/Shift
+    var fl = Math.hypot(b.f[0], b.f[2]) || 1;
+    var fx = b.f[0] / fl, fz = b.f[2] / fl;
+    var rl = Math.hypot(b.r[0], b.r[2]) || 1;
+    var rx = b.r[0] / rl, rz = b.r[2] / rl;
     var mx = 0, my = 0, mz = 0;
-    if (keys['w'] || keys['arrowup']) { mx += b.f[0]; my += b.f[1]; mz += b.f[2]; }
-    if (keys['s'] || keys['arrowdown']) { mx -= b.f[0]; my -= b.f[1]; mz -= b.f[2]; }
-    if (keys['a'] || keys['arrowleft']) { mx -= b.r[0]; my -= b.r[1]; mz -= b.r[2]; }
-    if (keys['d'] || keys['arrowright']) { mx += b.r[0]; my += b.r[1]; mz += b.r[2]; }
+    if (keys['w'] || keys['arrowup']) { mx += fx; mz += fz; }
+    if (keys['s'] || keys['arrowdown']) { mx -= fx; mz -= fz; }
+    if (keys['a'] || keys['arrowleft']) { mx -= rx; mz -= rz; }
+    if (keys['d'] || keys['arrowright']) { mx += rx; mz += rz; }
     if (keys['e'] || keys['q'] || keys['space'] || keys['shift']) {
       var vy = (keys['e'] || keys['space']) ? 1 : -1;
       my += vy;
@@ -381,10 +387,11 @@
       cam.target[0] += mx * sp;
       cam.target[1] += my * sp;
       cam.target[2] += mz * sp;
+      // запас хода большой: упираться в границу уровня камерой не нужно
       var s = sim.scale || 1;
-      var lim = (sim.level.half || 4) * 3;
+      var lim = (sim.level.half || 4) * 8;
       cam.target[0] = clamp(cam.target[0], -lim, lim);
-      cam.target[1] = clamp(cam.target[1], -4 * s, 4 * s);
+      cam.target[1] = clamp(cam.target[1], -lim * 0.6, lim);
       cam.target[2] = clamp(cam.target[2], -lim, lim);
     }
   }
@@ -601,6 +608,13 @@
     sim.applyLevel(World.LEVELS[App.state.level]);
     App.applyPhysics();
     applyCamClip();
+    // после F5 камера должна стоять так же, как при клике по уровню
+    var L0 = World.LEVELS[App.state.level];
+    if (L0) {
+      if (L0.camDist) cam.dist = L0.camDist;
+      if (L0.camPhi) cam.phi = L0.camPhi;
+      cam.theta = 0.62;
+    }
 
     App.sim = sim;
     App.renderer = renderer;

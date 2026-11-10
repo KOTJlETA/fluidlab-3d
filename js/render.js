@@ -39,6 +39,7 @@
       line: GL.program(gl, FS.SH.lineVS, FS.SH.lineFS, 'line'),
       pointsDepth: GL.program(gl, FS.SH.pointsVS, FS.SH.pointsDepthFS, 'pointsDepth'),
       pointsThick: GL.program(gl, FS.SH.pointsVS, FS.SH.pointsThickFS, 'pointsThick'),
+      particles: GL.program(gl, FS.SH.pointsVS, FS.SH.particleFS, 'particles'),
       blur: GL.program(gl, FS.SH.fullscreenVS, FS.SH.blurFS, 'blur'),
       blur4: GL.program(gl, FS.SH.fullscreenVS, FS.SH.blur4FS, 'blur4'),
       fluid: GL.program(gl, FS.SH.fullscreenVS, FS.SH.fluidFS, 'fluid'),
@@ -156,6 +157,31 @@
     tri(B, F, E, [1, 0, 0]);
   }
 
+  // усечённый конус: нижний радиус r0, верхний r1, высота h
+  function pushFrustum(pos, nor, col, idx, r0, r1, h, seg, c, topC) {
+    for (var i = 0; i < seg; i++) {
+      var a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+      var am = (a0 + a1) * 0.5;
+      var slope = (r0 - r1) / h;
+      var nm = nrm3(Math.cos(am), slope, Math.sin(am));
+      var b = pos.length / 3;
+      var x0 = Math.cos(a0), z0 = Math.sin(a0), x1 = Math.cos(a1), z1 = Math.sin(a1);
+      pos.push(x0 * r0, 0, z0 * r0); nor.push(nm[0], nm[1], nm[2]); col.push(c[0], c[1], c[2]);
+      pos.push(x1 * r0, 0, z1 * r0); nor.push(nm[0], nm[1], nm[2]); col.push(c[0], c[1], c[2]);
+      pos.push(x1 * r1, h, z1 * r1); nor.push(nm[0], nm[1], nm[2]); col.push(c[0], c[1], c[2]);
+      pos.push(x0 * r1, h, z0 * r1); nor.push(nm[0], nm[1], nm[2]); col.push(c[0], c[1], c[2]);
+      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+
+      if (topC) {
+        var t2 = pos.length / 3;
+        pos.push(0, h, 0); nor.push(0, 1, 0); col.push(topC[0], topC[1], topC[2]);
+        pos.push(x0 * r1, h, z0 * r1); nor.push(0, 1, 0); col.push(topC[0], topC[1], topC[2]);
+        pos.push(x1 * r1, h, z1 * r1); nor.push(0, 1, 0); col.push(topC[0], topC[1], topC[2]);
+        idx.push(t2, t2 + 1, t2 + 2);
+      }
+    }
+  }
+
   Renderer.prototype._buildGeometry = function () {
     var gl = this.gl;
 
@@ -212,6 +238,11 @@
     pushBox(ph, nh, ch, ih, 0, -0.02, 0.87, 0.13, 0.13, 0.02, [0.98, 0.85, 0.45]);
     pushPrism(ph, nh, ch, ih, 0.98, 0.98, 0.10, 0.92, [0.72, 0.22, 0.18]);
     this.house = this._uploadMesh(meshData(ph, nh, ch, new Uint16Array(ih)));
+
+    // вулкан: усечённый конус с тёмным жерлом
+    var pv = [], nv = [], cv = [], iv = [];
+    pushFrustum(pv, nv, cv, iv, 1.0, 0.235, 1.0, 30, [0.26, 0.21, 0.18], [0.10, 0.07, 0.06]);
+    this.cone = this._uploadMesh(meshData(pv, nv, cv, new Uint16Array(iv)));
 
     // тор (портал), плоскость XY, ось Z
     var tp = [], tn = [], ti = [];
@@ -495,6 +526,26 @@
       gl.drawElements(gl.TRIANGLES, this.plane.count, gl.UNSIGNED_SHORT, 0);
     }
 
+    // вулкан
+    if (level.cone) {
+      p = this.progs.scene;
+      gl.useProgram(p.program);
+      GL.u3fv(gl, p, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, p, 'uCamPos', cam.eye);
+      var mc2 = modelTRS(0, level.floorY, 0, 0, level.cone.r0, level.cone.h, level.cone.r0);
+      GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mc2));
+      GL.um4(gl, p, 'uModel', mc2);
+      GL.u3f(gl, p, 'uColor', 1, 1, 1);
+      GL.u1f(gl, p, 'uAlpha', 1.0);
+      GL.u1f(gl, p, 'uEmissive', 0.0);
+      GL.u1i(gl, p, 'uStyle', 0);
+      GL.u1f(gl, p, 'uSeed', 0);
+      GL.u2f(gl, p, 'uWinA', 1, 1);
+      GL.u2f(gl, p, 'uWinB', 1, 1);
+      gl.bindVertexArray(this.cone.vao);
+      gl.drawElements(gl.TRIANGLES, this.cone.count, gl.UNSIGNED_SHORT, 0);
+    }
+
     // объекты
     p = this.progs.scene;
     gl.useProgram(p.program);
@@ -545,6 +596,19 @@
         GL.u2f(gl, p, 'uWinB', 1, 1);
         gl.bindVertexArray(this.car.vao);
         gl.drawElements(gl.TRIANGLES, this.car.count, gl.UNSIGNED_SHORT, 0);
+      } else if (o.kind === 'mound') {
+        var mm = modelTRS(o.pos[0], o.pos[1], o.pos[2], 0, o.r, o.r * 0.30, o.r);
+        GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mm));
+        GL.um4(gl, p, 'uModel', mm);
+        GL.u3fv(gl, p, 'uColor', o.color);
+        GL.u1f(gl, p, 'uAlpha', 1.0);
+        GL.u1f(gl, p, 'uEmissive', 0.05);
+        GL.u1i(gl, p, 'uStyle', 0);
+        GL.u1f(gl, p, 'uSeed', 0);
+        GL.u2f(gl, p, 'uWinA', 1, 1);
+        GL.u2f(gl, p, 'uWinB', 1, 1);
+        gl.bindVertexArray(this.sphere.vao);
+        gl.drawElements(gl.TRIANGLES, this.sphere.count, gl.UNSIGNED_SHORT, 0);
       } else if (o.kind === 'tree') {
         var mt = modelTRS(o.pos[0], o.pos[1], o.pos[2], o.rot || 0, o.size[0], o.size[1], o.size[2]);
         GL.um4(gl, p, 'uMVP', M.multiply(M.create(), vp, mt));
@@ -603,6 +667,39 @@
         gl.bindVertexArray(this.cube.vao);
         gl.drawElements(gl.TRIANGLES, this.cube.count, gl.UNSIGNED_SHORT, 0);
       }
+    }
+
+    // сыпучие частицы (снег, песок, пыль) — отдельные точки, а не поверхность жидкости
+    var hasParticles = false;
+    for (var q = 0; q < objs.length && !hasParticles; q++) {
+      if (objs[q].kind === 'mound') hasParticles = true;
+    }
+    if (hasParticles || (sim.sources && sim.sources.some(function (s) {
+      return FS.World.TYPES[s.type] && !FS.World.TYPES[s.type].fluid;
+    }))) {
+      var pp = this.progs.particles;
+      gl.useProgram(pp.program);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
+      GL.bindTex(gl, pp, 'uPos', sim.pos.tex, 0);
+      GL.bindTex(gl, pp, 'uType', sim.typeTex, 1);
+      GL.bindTex(gl, pp, 'uVel', sim.vel.tex, 2);
+      GL.um4(gl, pp, 'uView', cam.view);
+      GL.um4(gl, pp, 'uProj', cam.proj);
+      GL.u2f(gl, pp, 'uTexSize', sim.TW, sim.TH);
+      GL.u1f(gl, pp, 'uRadius', sim.radiusRender);
+      GL.u1f(gl, pp, 'uPointScale', H * cam.proj[5]);
+      GL.u3fv(gl, pp, 'uColors', flattenColors());
+      GL.u1fv(gl, pp, 'uRadScale', radScales());
+      GL.u1fv(gl, pp, 'uIsFluid', fluidFlags());
+      GL.u1f(gl, pp, 'uPass', 2);
+      GL.u1f(gl, pp, 'uAlpha', 0.95);
+      gl.bindVertexArray(this.pointsVAO);
+      gl.drawArrays(gl.POINTS, 0, sim.N);
+      gl.disable(gl.BLEND);
+      gl.disable(gl.DEPTH_TEST);
     }
 
     // стеклянные стенки
@@ -812,6 +909,9 @@
     GL.u1f(gl, p, 'uRadius', sim.radiusRender);
     GL.u1f(gl, p, 'uPointScale', H * cam.proj[5]);
     GL.u3fv(gl, p, 'uColors', flattenColors());
+    GL.u1fv(gl, p, 'uRadScale', radScales());
+    GL.u1fv(gl, p, 'uIsFluid', fluidFlags());
+    GL.u1f(gl, p, 'uPass', 1);
     GL.u1f(gl, p, 'uM10', cam.proj[10]);
     GL.u1f(gl, p, 'uM14', cam.proj[14]);
     gl.bindVertexArray(this.pointsVAO);
@@ -833,6 +933,9 @@
     GL.u1f(gl, p, 'uRadius', sim.radiusRender);
     GL.u1f(gl, p, 'uPointScale', H * cam.proj[5]);
     GL.u3fv(gl, p, 'uColors', flattenColors());
+    GL.u1fv(gl, p, 'uRadScale', radScales());
+    GL.u1fv(gl, p, 'uIsFluid', fluidFlags());
+    GL.u1f(gl, p, 'uPass', 1);
     gl.drawArrays(gl.POINTS, 0, sim.N);
 
     gl.disable(gl.BLEND);
@@ -860,7 +963,7 @@
     GL.u1f(gl, bl, 'uPx', depthEps);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // второй проход размытия — сглаживает шум разреженной выборки
+    // второй проход — сглаживает шум разреженной выборки
     this._fullscreen(this.rtBlurA.fbo, W, H);
     GL.bindTex(gl, bl, 'uSrc', this.rtBlurB.tex, 0);
     GL.u2f(gl, bl, 'uRes', W, H);
@@ -875,7 +978,7 @@
     GL.u1f(gl, bl, 'uPx', depthEps);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // размытие толщины/цвета — иначе жидкость распадается на отдельные шарики
+    // размытие толщины и цвета
     var b4 = this.progs.blur4;
     gl.useProgram(b4.program);
     this._fullscreen(this.rtBlurA.fbo, W, H);
@@ -918,6 +1021,20 @@
 
     gl.bindVertexArray(null);
   };
+
+  var _fluidBuf = new Float32Array(8);
+  function fluidFlags() {
+    var T = FS.World.TYPES;
+    for (var i = 0; i < 8; i++) _fluidBuf[i] = (T[i] && T[i].fluid) ? 1 : 0;
+    return _fluidBuf;
+  }
+
+  var _radBuf = new Float32Array(8);
+  function radScales() {
+    var T = FS.World.TYPES;
+    for (var i = 0; i < 8; i++) _radBuf[i] = (T[i] && T[i].fluid) ? 1.0 : 0.32;
+    return _radBuf;
+  }
 
   var _colorBuf = new Float32Array(24);
   function flattenColors() {

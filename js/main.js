@@ -7,6 +7,7 @@
 
   var App = {
     paused: false,
+    mode: 'nav',
     autoRotate: false,
     vortex: false,
     lastT: 0,
@@ -85,7 +86,26 @@
   };
 
   App.changed = function () {
+    App.state.mode = App.mode;
     FS.Store.save(App.state);
+  };
+
+  App.setMode = function (m) {
+    App.mode = (m === 'edit') ? 'edit' : 'nav';
+    App.state.mode = App.mode;
+    if (App.mode === 'nav') App.select(null);
+    FS.UI.buildModes(document.getElementById('modes'), App);
+    App.changed();
+  };
+
+  App.setLang = function (lang) {
+    FS.I18N.set(lang);
+    FS.I18N.applyStatic();
+    App.refreshAll();
+    FS.UI.buildModes(document.getElementById('modes'), App);
+    FS.UI.buildLanguages(document.getElementById('langs'), App);
+    FS.UI.buildScenarios(document.getElementById('scenarios'), App);
+    App.changed();
   };
 
   App.select = function (kind, id) {
@@ -137,6 +157,13 @@
     App.changed();
   };
 
+  function applyCamClip() {
+    var s = sim.scale || 1;
+    cam.near = Math.max(0.01, 0.02 * s);
+    cam.far = Math.max(60, cam.dist * 14);
+    cam.target = [0, -0.10 * s, 0];
+  }
+
   App.setLevel = function (key) {
     if (!World.LEVELS[key]) return;
     var L = World.LEVELS[key];
@@ -146,15 +173,35 @@
     App.state.skybox = L.sky;
     App.state.objects = World.defaultObjects(key);
     World.syncUid(App.state.objects);
-    App.state.sources = World.defaultSources(key);
+    App.state.scenario = World.defaultScenario(key);
+    App.state.sources = World.defaultSources(key, App.state.scenario);
     sim.sources = App.state.sources;
     sim.setObjects(App.state.objects);
     App.selected = null;
     updateGizmoOrigin();
     sim.applyLevel(L);
+    applyCamClip();
     sim.reset();
     sim.prewarm(25);
     App.refreshAll();
+    App.changed();
+  };
+
+  App.setScenario = function (key) {
+    if (!World.SCENARIOS[App.state.level]) return;
+    if (World.SCENARIOS[App.state.level].indexOf(key) < 0) return;
+    App.state.scenario = key;
+    App.state.sources = World.buildScenario(key, App.state.level);
+    sim.sources = App.state.sources;
+    App.vortex = (key === 'whirl');
+    App.state.vortex = App.vortex;
+    var vb = document.getElementById('btn-preset');
+    if (vb) vb.classList.toggle('active', App.vortex);
+    App.select(null);
+    sim.reset();
+    sim.prewarm(18);
+    FS.UI.buildSources(document.getElementById('sources'), App);
+    FS.UI.buildScenarios(document.getElementById('scenarios'), App);
     App.changed();
   };
 
@@ -241,10 +288,13 @@
   };
 
   App.refreshAll = function () {
+    FS.UI.buildModes(document.getElementById('modes'), App);
     FS.UI.buildLevels(document.getElementById('levels'), App);
+    FS.UI.buildScenarios(document.getElementById('scenarios'), App);
     FS.UI.buildSkies(document.getElementById('skies'), App);
     FS.UI.buildSources(document.getElementById('sources'), App);
     FS.UI.buildObjects(document.getElementById('objects'), App);
+    FS.UI.buildLanguages(document.getElementById('langs'), App);
     FS.UI.buildInspector(App);
   };
 
@@ -275,41 +325,88 @@
     return { kind: null, ray: ray };
   }
 
+  var keys = Object.create(null);
+  window.addEventListener('keydown', function (e) {
+    var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+    var isRange = tag === 'input' && e.target.type === 'range';
+    if (!isRange && /input|textarea|select/.test(tag)) return;
+    var kk = e.key.toLowerCase();
+    keys[kk] = true;
+    if (kk === ' ') keys['space'] = true;
+    if (kk === 'shift') keys['shift'] = true;
+    if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(kk) >= 0) e.preventDefault();
+  });
+  window.addEventListener('keyup', function (e) {
+    var kk = e.key.toLowerCase();
+    keys[kk] = false;
+    if (kk === ' ') keys['space'] = false;
+    if (kk === 'shift') keys['shift'] = false;
+  });
+  window.addEventListener('blur', function () { keys = Object.create(null); });
+
+  function flyCamera(dt) {
+    var b = cam.basis();
+    var sp = cam.dist * 0.55 * dt;
+    var mx = 0, my = 0, mz = 0;
+    if (keys['w'] || keys['arrowup']) { mx += b.f[0]; my += b.f[1]; mz += b.f[2]; }
+    if (keys['s'] || keys['arrowdown']) { mx -= b.f[0]; my -= b.f[1]; mz -= b.f[2]; }
+    if (keys['a'] || keys['arrowleft']) { mx -= b.r[0]; my -= b.r[1]; mz -= b.r[2]; }
+    if (keys['d'] || keys['arrowright']) { mx += b.r[0]; my += b.r[1]; mz += b.r[2]; }
+    if (keys['e'] || keys['q'] || keys['space'] || keys['shift']) {
+      var vy = (keys['e'] || keys['space']) ? 1 : -1;
+      my += vy;
+    }
+    if (mx || my || mz) {
+      cam.target[0] += mx * sp;
+      cam.target[1] += my * sp;
+      cam.target[2] += mz * sp;
+      var s = sim.scale || 1;
+      var lim = (sim.level.half || 4) * 3;
+      cam.target[0] = clamp(cam.target[0], -lim, lim);
+      cam.target[1] = clamp(cam.target[1], -4 * s, 4 * s);
+      cam.target[2] = clamp(cam.target[2], -lim, lim);
+    }
+  }
+
   function bindInput() {
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     canvas.addEventListener('pointerdown', function (e) {
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       canvas.setPointerCapture(e.pointerId);
       var p = canvasPoint(e);
       drag.x = p.x; drag.y = p.y;
       drag.fx = 0; drag.fy = 0;
       drag.axis = -1;
 
-      if (e.button === 2 || e.shiftKey) { drag.push = true; return; }
+      if (e.button === 2) { drag.push = true; return; }
 
-      var hit = pickAt(p.x, p.y);
+      if (App.mode === 'edit') {
+        var ray0 = cam.ray(p.x, p.y, canvas.width, canvas.height);
 
-      // гизмо: тянем ось
-      if (App.gizmo.origin) {
-        var ax = FS.Gizmo.pickAxis(hit.ray.o, hit.ray.d, App.gizmo.origin);
-        if (ax >= 0) {
-          drag.axis = ax;
-          App.gizmo.activeAxis = ax;
-          var sel = selectedRef();
-          if (sel) {
-            drag.startPos = sel.pos.slice();
-            drag.startT = FS.Gizmo.axisParam(hit.ray.o, hit.ray.d, App.gizmo.origin, FS.Gizmo.AXES[ax]);
+        // гизмо: тянем ось
+        if (App.gizmo.origin) {
+          var ax = FS.Gizmo.pickAxis(ray0.o, ray0.d, App.gizmo.origin);
+          if (ax >= 0) {
+            drag.axis = ax;
+            App.gizmo.activeAxis = ax;
+            var sel = selectedRef();
+            if (sel) {
+              drag.startPos = sel.pos.slice();
+              drag.startT = FS.Gizmo.axisParam(ray0.o, ray0.d, App.gizmo.origin, FS.Gizmo.AXES[ax]);
+            }
+            return;
           }
+        }
+
+        var hit = pickAt(p.x, p.y);
+        if (hit.kind) {
+          App.select(hit.kind, hit.obj.id);
           return;
         }
+        if (App.selected) { App.select(null); }
       }
 
-      if (hit.kind) {
-        App.select(hit.kind, hit.obj.id);
-        return;
-      }
-
-      if (App.selected) { App.select(null); }
       drag.orbit = true;
       document.getElementById('hint').classList.add('hide');
     });
@@ -395,7 +492,7 @@
     pb.addEventListener('click', function () {
       App.paused = !App.paused;
       pb.classList.toggle('active', App.paused);
-      pb.textContent = App.paused ? 'Продолжить' : 'Пауза';
+      pb.textContent = FS.I18N.t(App.paused ? 'btn.resume' : 'btn.pause');
     });
     var rb = document.getElementById('btn-rotate');
     rb.classList.toggle('active', App.autoRotate);
@@ -454,22 +551,24 @@
     });
 
     if (!gl) {
-      fail('Ваш браузер не поддерживает <b>WebGL2</b>.<br>Откройте приложение в Chrome, Edge или Firefox последней версии.');
+      fail(FS.I18N.t('err.webgl2'));
       return;
     }
     if (!gl.getExtension('EXT_color_buffer_float')) {
-      fail('Не удалось включить <b>EXT_color_buffer_float</b>.<br>GPU-решатель требует поддержки float-текстур.');
+      fail(FS.I18N.t('err.float'));
       return;
     }
 
     App.state = FS.Store.load();
+    App.mode = App.state.mode || 'nav';
 
     renderer = new FS.Renderer(gl, canvas);
     sim = new FS.FluidSim(gl, { count: App.state.count });
-    sim.setLevel(World.LEVELS[App.state.level]);
     sim.setObjects(App.state.objects);
     sim.sources = App.state.sources;
+    sim.applyLevel(World.LEVELS[App.state.level]);
     App.applyPhysics();
+    applyCamClip();
 
     App.sim = sim;
     App.renderer = renderer;
@@ -478,6 +577,7 @@
     App.autoRotate = !!App.state.autoRotate;
     App.vortex = !!App.state.vortex;
 
+    FS.I18N.applyStatic();
     FS.UI.bindTips();
     buildShell();
     resize();
@@ -496,7 +596,10 @@
   }
 
   function buildShell() {
+    FS.UI.buildModes(document.getElementById('modes'), App);
+    FS.UI.buildLanguages(document.getElementById('langs'), App);
     FS.UI.buildLevels(document.getElementById('levels'), App);
+    FS.UI.buildScenarios(document.getElementById('scenarios'), App);
     FS.UI.buildSkies(document.getElementById('skies'), App);
     FS.UI.buildPhysics(document.getElementById('phys'), App);
     FS.UI.buildPerf(document.getElementById('perf'), App);
@@ -563,6 +666,7 @@
     }
 
     if (App.autoRotate) cam.theta += dt * 0.22;
+    flyCamera(dt);
 
     var t0 = performance.now();
 

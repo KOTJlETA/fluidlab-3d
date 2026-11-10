@@ -36,6 +36,12 @@ uniform vec3 uSphereC;
 uniform float uSphereR;
 uniform float uPRadius;
 
+uniform float uConeOn;
+uniform vec3 uConeC;
+uniform float uConeR0;
+uniform float uConeR1;
+uniform float uConeH;
+
 uniform vec4 uSph[16];
 uniform int uSphCount;
 uniform vec4 uObsBox[40];    // xyz центр, w = поворот вокруг Y
@@ -64,6 +70,29 @@ vec3 pushOut(vec3 p, out vec3 nrm) {
     }
   } else {
     if (p.y < uBoxMin.y + r) { p.y = uBoxMin.y + r; nrm = vec3(0.0, 1.0, 0.0); }
+  }
+
+  // усечённый конус (вулкан): частица скользит по внешней поверхности,
+  // сверху жерло открыто — туда можно упасть
+  if (uConeOn > 0.5) {
+    vec3 q = p - uConeC;
+    if (q.y < uConeH && q.y > -0.35 * uConeH) {
+      float t = clamp(q.y / uConeH, 0.0, 1.0);
+      float rad = mix(uConeR0, uConeR1, t) + r;
+      float rho = length(q.xz);
+      if (rho < rad && rho > uConeR1 * 0.9) {
+        vec2 dir = rho > 1e-4 ? q.xz / rho : vec2(1.0, 0.0);
+        p.xz = uConeC.xz + dir * rad;
+        nrm = normalize(vec3(dir.x, 0.35, dir.y));
+      }
+    }
+    if (q.y < 0.0 && q.y > -0.35 * uConeH) {
+      float rho2 = length(q.xz);
+      if (rho2 < uConeR0) {
+        p.y = uConeC.y;
+        nrm = vec3(0.0, 1.0, 0.0);
+      }
+    }
   }
 
   for (int i = 0; i < uSphCount; i++) {
@@ -128,6 +157,10 @@ uniform float uDt;
 uniform float uMaxSpeed;
 uniform vec3 uGravity;
 uniform float uBuoy[8];
+uniform float uGravScale[8];
+uniform float uDragK[8];
+uniform float uIsFluid[8];
+uniform float uTime;
 uniform vec4 uMouse;
 uniform vec3 uMouseForce;
 uniform float uVortex;
@@ -153,8 +186,18 @@ void main() {
 
   int t = int(texelFetch(uType, c, 0).x + 0.5);
   float buoy = uBuoy[t];
+  bool fluid = uIsFluid[t] > 0.5;
 
-  vec3 v = V.xyz + (uGravity + vec3(0.0, buoy, 0.0)) * uDt;
+  vec3 v = V.xyz + (uGravity * uGravScale[t] + vec3(0.0, buoy, 0.0)) * uDt;
+
+  if (!fluid) {
+    // сыпучая частица: вязкое трение + лёгкое «порхание»
+    float dk = uDragK[t];
+    v *= 1.0 / (1.0 + dk * uDt);
+    float ph = P.x * 3.1 + P.z * 2.3 + uTime * 1.7 + P.y * 0.7;
+    v.x += sin(ph) * 0.55 * uGravScale[t] * uDt * 3.0;
+    v.z += cos(ph * 1.31 + 1.7) * 0.55 * uGravScale[t] * uDt * 3.0;
+  }
 
   if (uMouse.w > 0.0) {
     vec3 d = P.xyz - uMouse.xyz;
@@ -220,6 +263,7 @@ uniform sampler2D uPred;
 uniform sampler2D uType;
 uniform vec2 uTexSize;
 uniform float uSpacing[8];
+uniform float uIsFluid[8];
 uniform float uEps;
 uniform float uCMin;
 uniform float uLamMax;
@@ -233,6 +277,7 @@ void main() {
   if (p.y < -500.0) { oOut = vec4(0.0); return; }
 
   int ti = int(texelFetch(uType, c, 0).x + 0.5);
+  if (uIsFluid[ti] < 0.5) { oOut = vec4(0.0); return; }
   float sp = uSpacing[ti];
   float n0 = 1.0 / (sp * sp * sp);
 
@@ -252,10 +297,12 @@ void main() {
     for (int k = 0; k < cnt; k++) {
       int li = start + k;
       int j = int(texelFetch(uGridIdx, ivec2(li % uTW, li / uTW), 0).x + 0.5);
-      vec3 pj = texelFetch(uPred, ivec2(j % uTW, j / uTW), 0).xyz;
+      ivec2 jc = ivec2(j % uTW, j / uTW);
+      vec3 pj = texelFetch(uPred, jc, 0).xyz;
       vec3 r = p - pj;
       float r2 = dot(r, r);
       if (r2 < uH2 && r2 > 1e-10) {
+        if (uIsFluid[int(texelFetch(uType, jc, 0).x + 0.5)] < 0.5) continue;
         float rl = sqrt(r2);
         dens += poly6(r2);
         float gm = spikyMag(rl);
@@ -283,6 +330,7 @@ uniform sampler2D uLambda;
 uniform sampler2D uType;
 uniform vec2 uTexSize;
 uniform float uSpacing[8];
+uniform float uIsFluid[8];
 uniform float uSCorrK;
 uniform float uMaxDp;
 ${SH.kernel}
@@ -298,6 +346,7 @@ void main() {
 
   float lamI = texelFetch(uLambda, c, 0).x;
   int ti = int(texelFetch(uType, c, 0).x + 0.5);
+  if (uIsFluid[ti] < 0.5) { oOut = vec4(p, Pd.w); return; }
   float sp = uSpacing[ti];
   float n0 = 1.0 / (sp * sp * sp);
   float wdq = poly6(0.04 * uH2);
@@ -321,6 +370,7 @@ void main() {
       vec3 r = p - pj;
       float r2 = dot(r, r);
       if (r2 < uH2 && r2 > 1e-10) {
+        if (uIsFluid[int(texelFetch(uType, jc, 0).x + 0.5)] < 0.5) continue;
         float rl = sqrt(r2);
         float w = poly6(r2);
         float q = w / wdq;
@@ -360,6 +410,8 @@ uniform float uVisc[8];
 uniform float uViscScale;
 uniform float uMaxSpeed;
 uniform float uSpacing[8];
+uniform float uIsFluid[8];
+uniform float uDragK[8];
 ${SH.kernel}
 ${SH.gridDecl}
 ${SH.collision}
@@ -374,6 +426,7 @@ void main() {
   vec3 v = (p - P.xyz) / uDt;
 
   int ti = int(texelFetch(uType, c, 0).x + 0.5);
+  bool fluid = uIsFluid[ti] > 0.5;
   float sp = uSpacing[ti];
   float n0 = 1.0 / (sp * sp * sp);
 
@@ -395,7 +448,8 @@ void main() {
       vec3 pj = texelFetch(uPred, jc, 0).xyz;
       vec3 r = p - pj;
       float r2 = dot(r, r);
-      if (r2 < uH2 && r2 > 1e-10) {
+      if (fluid && r2 < uH2 && r2 > 1e-10) {
+        if (uIsFluid[int(texelFetch(uType, jc, 0).x + 0.5)] < 0.5) continue;
         vec3 pj0 = texelFetch(uPos, jc, 0).xyz;
         vec3 vj = (pj - pj0) / uDt;
         dv += (vj - v) * poly6(r2);
@@ -403,8 +457,13 @@ void main() {
     }
   }
   dv /= n0;
-  float visc = uVisc[ti];
-  v += dv * visc * uViscScale;
+  if (fluid) {
+    float visc = uVisc[ti];
+    v += dv * visc * uViscScale;
+  } else {
+    // сыпучие частицы не вязкие: гасим скорость и добавляем трение о пол
+    v *= 1.0 / (1.0 + uDragK[ti] * uDt);
+  }
 
   vec3 nrm;
   vec3 pc = pushOut(p, nrm);
@@ -433,7 +492,10 @@ uniform mat4 uProj;
 uniform vec2 uTexSize;
 uniform float uRadius;
 uniform float uPointScale;
+uniform float uIsFluid[8];
 uniform vec3 uColors[8];
+uniform float uRadScale[8];
+uniform float uPass;   // 1 — только жидкости, 2 — только сыпучие частицы
 out float vDepth;
 out float vR;
 out vec3 vColor;
@@ -450,6 +512,14 @@ void main() {
   vColor = uColors[t].rgb;
   vType = float(t);
 
+  bool isFluid = uIsFluid[t] > 0.5;
+  if ((uPass > 1.5 && isFluid) || (uPass < 1.5 && uPass > 0.5 && !isFluid)) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 1.0;
+    vDepth = 1e6;
+    return;
+  }
+
   vec4 vp = uView * vec4(p, 1.0);
   vDepth = -vp.z;
   if (vDepth < 0.02 || p.y < -500.0) {
@@ -459,8 +529,8 @@ void main() {
     return;
   }
   gl_Position = uProj * vp;
-  gl_PointSize = clamp(uRadius * uPointScale / vDepth, 1.0, 160.0);
-  vR = uRadius;
+  gl_PointSize = clamp(uRadius * uRadScale[t] * uPointScale / max(vDepth, 0.02), 1.0, 128.0);
+  vR = uRadius * uRadScale[t];
 }`;
 
   SH.pointsDepthFS = `#version 300 es
@@ -475,9 +545,26 @@ void main() {
   vec2 d = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(d, d);
   if (r2 > 1.0) discard;
-  // плоская глубина: сферическая реконструкция давала блики-кольца на каждой частице
-  // глубина постоянна по спрайту — пишем её в цвет, z-буфер работает по умолчанию
+  // плоская глубина: сферическая реконструкция превращала массу в отдельные шары
   oOut = vec4(vDepth, 0.0, 0.0, 1.0);
+}`;
+
+  SH.particleFS = `#version 300 es
+precision highp float;
+in float vDepth;
+in vec3 vColor;
+in float vType;
+in float vSpeed;
+uniform float uAlpha;
+out vec4 oOut;
+
+void main() {
+  vec2 d = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(d, d);
+  if (r2 > 1.0) discard;
+  float a = smoothstep(1.0, 0.25, r2);
+  vec3 c = vColor * (0.85 + 0.35 * (1.0 - r2));
+  oOut = vec4(c, a * uAlpha);
 }`;
 
   SH.pointsThickFS = `#version 300 es
@@ -514,8 +601,7 @@ void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
   float d0 = texture(uSrc, uv).r;
 
-  // дилатация: промежутки между частицами заполняем ближайшей поверхностью,
-  // иначе в силуэте остаются «дыры» и жидкость рассыпается на пузыри
+  // дилатация: промежутки между частицами заполняем ближайшей поверхностью
   if (d0 > 900.0) {
     float best = 1e9;
     for (int i = -5; i <= 5; i++) {
@@ -646,7 +732,7 @@ void main() {
   col += fluidCol * smoothstep(0.55, 1.0, fluidCol.r) * 0.9 * alpha;
 
   vec3 outc = mix(sceneCol, col, alpha);
-  // дизеринг: убирает полосы 8-битного квантования на плавных градиентах
+  // дизеринг убирает полосы 8-битного квантования на плавных градиентах
   float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   outc += (n - 0.5) * (0.75 / 255.0);
   fragColor = vec4(outc, 1.0);

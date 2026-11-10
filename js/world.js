@@ -1,26 +1,45 @@
-/* FluidLab 3D — уровни, объекты сцены, зондирование жидкости, физика машин */
+/* FluidLab 3D — уровни, сценарии, объекты сцены, зондирование жидкости, физика машин */
 (function () {
   'use strict';
   var FS = (window.FS = window.FS || {});
   var World = (FS.World = {});
+  var T = function (k) { return FS.I18N.t(k); };
+
+  /* ---------------- типы «жидкостей» ----------------
+     fluid: true  — участвует в PBF-решателе (давление, вязкость, поверхность)
+     fluid: false — сыпучая частица: своя баллистика, трение, никакого давления */
+
+  World.TYPES = [
+    { key: 'water', css: '#2173d1', fluid: true, spacing: 0.082, visc: 0.10, buoy: 0.0, grav: 1.0, drag: 0.0 },
+    { key: 'oil', css: '#a86a1a', fluid: true, spacing: 0.094, visc: 0.30, buoy: 0.35, grav: 1.0, drag: 0.0 },
+    { key: 'lava', css: '#ff5210', fluid: true, spacing: 0.075, visc: 0.55, buoy: -0.9, grav: 1.0, drag: 0.0 },
+    { key: 'slime', css: '#33d961', fluid: true, spacing: 0.086, visc: 0.85, buoy: 0.0, grav: 1.0, drag: 0.0 },
+    { key: 'snow', css: '#eef4ff', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.12, drag: 3.4 },
+    { key: 'sand', css: '#d9c48a', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.95, drag: 0.7 },
+    { key: 'dust', css: '#b9b2a6', fluid: false, spacing: 0.070, visc: 0.0, buoy: 0.0, grav: 0.10, drag: 3.2 }
+  ];
+  World.typeName = function (i) { return T('type.' + World.TYPES[i].key); };
 
   /* ---------------- уровни ----------------
-     scale — единый масштаб мира: от него зависят шаг решётки, размеры частиц,
-     скорости и размер арены. Арена всегда занимает кадр целиком.            */
+     scale — единый масштаб мира: шаг решётки, размеры частиц, скорости и арена
+     растут вместе, поэтому кадр всегда заполнен, а плотность жидкости одинакова. */
 
   function mkLevel(o) {
     var s = o.scale;
     var L = {
-      name: o.name, kind: o.kind, scale: s, floorStyle: o.floorStyle,
+      key: o.key,
+      kind: o.kind, scale: s, floorStyle: o.floorStyle,
       sky: o.sky, ground: true,
-      floorY: -1.6 * s, wallTop: 1.6 * s,
+      floorY: -1.6 * s,
+      wallTop: o.wallTop === undefined ? 1.6 * s : o.wallTop * s,
       half: o.half,
       min: [-o.half, -1.6 * s, -o.half],
       max: [o.half, 1.6 * s, o.half],
-      camDist: o.half * (o.city ? 2.45 : 2.05),
-      camPhi: o.camPhi || (o.city ? 1.02 : 0.98),
+      camDist: o.half * (o.camK || 1.85),
+      camPhi: o.camPhi || 0.98,
       city: !!o.city, cityN: o.cityN || 0, maxBuildings: o.maxBuildings || 0,
-      maxCars: o.maxCars || 0
+      maxCars: o.maxCars || 0,
+      cone: o.cone || null
     };
     if (o.kind === 'sphere') {
       L.center = [0, -0.15 * s, 0];
@@ -28,45 +47,44 @@
       L.half = 2.0 * s;
       L.camDist = L.radius * 2.9;
     }
+    L.name = T('level.' + o.key);
     return L;
   }
 
   World.LEVELS = {
     city_mini: mkLevel({
-      name: 'Мини-город', kind: 'box', scale: 1.0, half: 2.0, floorStyle: 1,
+      key: 'city_mini', kind: 'box', scale: 1.0, half: 2.0, floorStyle: 1,
       sky: 'night', city: true, cityN: 4, maxBuildings: 18, maxCars: 5
     }),
     city_mid: mkLevel({
-      name: 'Средний город', kind: 'box', scale: 1.6, half: 3.2, floorStyle: 1,
+      key: 'city_mid', kind: 'box', scale: 2.5, half: 5.0, floorStyle: 1,
       sky: 'night', city: true, cityN: 5, maxBuildings: 30, maxCars: 8
     }),
     city_big: mkLevel({
-      name: 'Гигантский город', kind: 'box', scale: 2.5, half: 5.0, floorStyle: 1,
-      sky: 'night', city: true, cityN: 7, maxBuildings: 30, maxCars: 9
+      key: 'city_big', kind: 'box', scale: 16, half: 32.0, floorStyle: 1,
+      sky: 'night', city: true, cityN: 10, maxBuildings: 62, maxCars: 12, camK: 1.55
     }),
     tank: mkLevel({
-      name: 'Резервуар', kind: 'box', scale: 0.95, half: 1.8, floorStyle: 0,
-      sky: 'grid'
+      key: 'tank', kind: 'box', scale: 0.95, half: 1.8, floorStyle: 0,
+      sky: 'grid', camK: 2.05
     }),
     sphere: mkLevel({
-      name: 'Снежный шар', kind: 'sphere', scale: 1.05, half: 2.1, floorStyle: 3,
-      sky: 'xmas'
+      key: 'sphere', kind: 'sphere', scale: 1.05, half: 2.1, floorStyle: 3,
+      sky: 'xmas', camK: 2.9
+    }),
+    volcano: mkLevel({
+      key: 'volcano', kind: 'none', scale: 3.0, half: 6.0, floorStyle: 2,
+      sky: 'sunset', camK: 2.6,
+      cone: { r0: 3.3, r1: 0.75, h: 7.4 }
     }),
     open: mkLevel({
-      name: 'Открытая площадка', kind: 'none', scale: 1.5, half: 3.0, floorStyle: 2,
-      sky: 'sunset', camPhi: 1.0
+      key: 'open', kind: 'none', scale: 1.5, half: 3.0, floorStyle: 2,
+      sky: 'sunset', camK: 2.2
     })
   };
 
-  World.SKIES = {
-    grid: 'Сетка',
-    night: 'Ночь',
-    sunset: 'Закат',
-    day: 'День',
-    nebula: 'Туманность',
-    studio: 'Студия',
-    xmas: 'Рождество'
-  };
+  World.SKIES = ['grid', 'night', 'sunset', 'day', 'nebula', 'studio', 'xmas'];
+  World.skyName = function (k) { return T('sky.' + k); };
 
   /* ---------------- утилиты ---------------- */
 
@@ -92,6 +110,10 @@
 
   World.sphere = function (pos, r, color) {
     return { id: World.uid(), kind: 'sphere', pos: pos.slice(), r: r, color: color || [0.30, 0.38, 0.46] };
+  };
+
+  World.mound = function (pos, r, color) {
+    return { id: World.uid(), kind: 'mound', pos: pos.slice(), r: r, color: color || [0.94, 0.96, 1.0] };
   };
 
   World.building = function (pos, hx, hy, hz, rot, color) {
@@ -133,6 +155,14 @@
     };
   };
 
+  World.FIELD_MODES = {
+    repel: { color: [1.0, 0.45, 0.35] },
+    attract: { color: [0.45, 0.75, 1.0] },
+    accelerate: { color: [0.55, 1.0, 0.55] },
+    drag: { color: [0.85, 0.75, 0.35] }
+  };
+  World.fieldName = function (m) { return T('field.' + m); };
+
   World.tree = function (pos, h, r, color) {
     return {
       id: World.uid(), kind: 'tree', pos: pos.slice(), rot: World.rr(0, Math.PI * 2),
@@ -154,13 +184,6 @@
     };
   };
 
-  World.FIELD_MODES = {
-    repel: { name: 'Отталкивание', color: [1.0, 0.45, 0.35] },
-    attract: { name: 'Притяжение', color: [0.45, 0.75, 1.0] },
-    accelerate: { name: 'Ускорение', color: [0.55, 1.0, 0.55] },
-    drag: { name: 'Торможение', color: [0.85, 0.75, 0.35] }
-  };
-
   /* ---------------- шаблоны уровней ---------------- */
 
   var PALETTE = [
@@ -173,7 +196,7 @@
   ];
 
   World.cityObjects = function (L) {
-    World.seed(90210 + Math.round(L.half * 100));
+    World.seed(90210 + Math.round(L.half * 10));
     var out = [];
     var s = L.scale;
     var H = L.half;
@@ -181,7 +204,7 @@
     var height = L.wallTop - L.floorY;
     var n = L.cityN;
     var cell = (H * 2) / n;
-    var plaza = H * 0.40;
+    var plaza = H * 0.34;
     var maxB = L.maxBuildings;
 
     for (var i = 0; i < n && out.length < maxB; i++) {
@@ -189,10 +212,10 @@
         var x = -H + (i + 0.5) * cell;
         var z = -H + (j + 0.5) * cell;
         var dist = Math.hypot(x, z);
-        if (dist < plaza) continue;              // площадь в центре — туда льётся жидкость
-        if (World.rnd() < 0.16) continue;        // пропуски-переулки
-        var w = cell * World.rr(0.17, 0.30);
-        var d = cell * World.rr(0.17, 0.30);
+        if (dist < plaza) continue;
+        if (World.rnd() < 0.14) continue;
+        var w = cell * World.rr(0.21, 0.33);
+        var d = cell * World.rr(0.21, 0.33);
         var h = height * World.rr(0.10, 0.27) * (dist > H * 0.72 ? 1.35 : 1.0);
         if (h < 0.12 * s) h = 0.12 * s;
         out.push(World.building(
@@ -203,7 +226,6 @@
       }
     }
 
-    // машины вдоль улиц (между кварталами)
     var maxC = L.maxCars;
     for (var c = 0; c < maxC; c++) {
       var along = World.rnd() < 0.5;
@@ -211,7 +233,7 @@
       var t = World.rr(-H * 0.85, H * 0.85);
       var px = along ? t : line;
       var pz = along ? line : t;
-      if (Math.hypot(px, pz) < plaza * 0.6) continue;
+      if (Math.hypot(px, pz) < plaza * 0.55) continue;
       out.push(World.car(
         [px, floorY + 0.06 * s, pz],
         along ? 0 : Math.PI / 2,
@@ -230,7 +252,7 @@
     ];
   };
 
-  /* Снежный шар: ёлочки, снеговики, деревянные домики */
+  /* Снежный шар: ёлочки, снеговики, деревянные домики, снежный наст */
   World.snowObjects = function (L) {
     World.seed(777);
     var s = L.scale;
@@ -238,22 +260,23 @@
     var y = L.floorY;
     var R = L.radius || 2.1;
 
-    // ёлочки по кольцу
+    // снежный наст — плоская «подушка» на дне шара
+    out.push(World.mound([0, y + 0.02 * s, 0], R * 0.86));
+
     var NT = 9;
     for (var i = 0; i < NT; i++) {
       var a = (i / NT) * Math.PI * 2 + 0.3;
       var rad = World.rr(0.95, 1.55) * s;
-      if (rad > R * 0.78) rad = R * 0.78;
+      if (rad > R * 0.72) rad = R * 0.72;
       var h = World.rr(0.55, 1.15) * s;
       out.push(World.tree([Math.cos(a) * rad, y + h * 0.5, Math.sin(a) * rad], h, h * 0.30));
     }
 
-    // домики
     var NH = 4;
     for (var j = 0; j < NH; j++) {
       var a2 = (j / NH) * Math.PI * 2 + 1.05;
       var r2 = World.rr(1.15, 1.6) * s;
-      if (r2 > R * 0.80) r2 = R * 0.80;
+      if (r2 > R * 0.74) r2 = R * 0.74;
       var hh = World.rr(0.24, 0.34) * s;
       var hw = hh * World.rr(0.85, 1.15);
       out.push(World.house(
@@ -262,13 +285,26 @@
       ));
     }
 
-    // снеговики у центра
     out.push(World.snowman([-0.34 * s, y + 0.36 * s, 0.28 * s], 0.30 * s));
     out.push(World.snowman([0.42 * s, y + 0.26 * s, -0.30 * s], 0.22 * s));
     out.push(World.snowman([0.05 * s, y + 0.30 * s, 0.72 * s], 0.25 * s));
-
-    // маленькие подарочные коробки-домики у ствола
     out.push(World.house([-0.70 * s, y + 0.14 * s, -0.55 * s], 0.16 * s, 0.14 * s, 0.16 * s, 0.4));
+    return out;
+  };
+
+  World.volcanoObjects = function (L) {
+    World.seed(5150);
+    var s = L.scale;
+    var y = L.floorY;
+    var out = [];
+    for (var i = 0; i < 7; i++) {
+      var a = (i / 7) * Math.PI * 2 + 0.4;
+      var rad = L.cone.r0 * World.rr(1.15, 1.7);
+      out.push(World.sphere(
+        [Math.cos(a) * rad, y + World.rr(0.10, 0.35) * s, Math.sin(a) * rad],
+        World.rr(0.10, 0.24) * s, [0.26, 0.22, 0.20]
+      ));
+    }
     return out;
   };
 
@@ -287,31 +323,145 @@
     if (L.city) return World.cityObjects(L);
     if (key === 'tank') return World.tankObjects(L);
     if (key === 'sphere') return World.snowObjects(L);
+    if (key === 'volcano') return World.volcanoObjects(L);
     return World.openObjects(L);
   };
 
-  World.defaultSources = function (key) {
-    var L = World.LEVELS[key || 'city_mini'] || World.LEVELS.city_mini;
-    var s = L.scale;
-    var H = L.half;
-    var top = L.wallTop;
+  /* ---------------- сценарии ----------------
+     Сценарий задаёт набор источников — именно он решает, что и откуда льётся,
+     поэтому по умолчанию не включаются все три потока сразу. */
 
-    // снежный шар: единственный источник — снегопад
-    if (key === 'sphere') {
+  var SID = 0;
+  function src(pos, dir, radius, speed, type, rate) {
+    SID++;
+    return {
+      id: 's' + SID, pos: pos, dir: dir, radius: radius, speed: speed,
+      type: type, rate: rate, enabled: true, acc: 0
+    };
+  }
+
+  var SCEN = {
+    /* Потоп: три вертикальных потока сверху */
+    flood: function (L) {
+      var s = L.scale, H = L.half, top = L.wallTop;
+      return [
+        src([-0.55 * H, top * 0.86, 0.12 * H], [0, -1, 0], 0.12 * s, 2.4 * s, 0, 420),
+        src([0.55 * H, top * 0.92, -0.15 * H], [0, -1, 0], 0.105 * s, 2.6 * s, 0, 340),
+        src([0.03 * H, top * 0.98, 0.52 * H], [0, -1, 0], 0.10 * s, 2.2 * s, 0, 280)
+      ];
+    },
+
+    /* Цунами: валы воды бьют горизонтально, под 90° к стенкам */
+    tsunami: function (L) {
+      var s = L.scale, H = L.half;
+      var y = L.min[1] + (L.wallTop - L.min[1]) * 0.42;
+      return [
+        src([-H * 0.96, y, 0], [1, 0, 0], 0.30 * s, 7.0 * s, 0, 1400),
+        src([H * 0.96, y, 0], [-1, 0, 0], 0.30 * s, 7.0 * s, 0, 1400),
+        src([0, y, -H * 0.96], [0, 0, 1], 0.26 * s, 6.4 * s, 0, 850),
+        src([0, y, H * 0.96], [0, 0, -1], 0.26 * s, 6.4 * s, 0, 850)
+      ];
+    },
+
+    /* Ливень: широкие медленные струи */
+    rain: function (L) {
+      var s = L.scale, H = L.half, top = L.wallTop;
+      return [
+        src([-0.45 * H, top * 0.95, -0.45 * H], [0, -1, 0], 0.26 * s, 1.2 * s, 0, 380),
+        src([0.45 * H, top * 0.95, -0.45 * H], [0, -1, 0], 0.26 * s, 1.2 * s, 0, 380),
+        src([-0.45 * H, top * 0.95, 0.45 * H], [0, -1, 0], 0.26 * s, 1.2 * s, 0, 380),
+        src([0.45 * H, top * 0.95, 0.45 * H], [0, -1, 0], 0.26 * s, 1.2 * s, 0, 380)
+      ];
+    },
+
+    /* Смешение: вода, нефть и лава */
+    mix: function (L) {
+      var s = L.scale, H = L.half, top = L.wallTop;
+      return [
+        src([-0.55 * H, top * 0.86, 0.12 * H], [0, -1, 0], 0.12 * s, 2.4 * s, 0, 400),
+        src([0.58 * H, top * 0.92, -0.16 * H], [0, -1, 0], 0.105 * s, 2.6 * s, 1, 300),
+        src([0.03 * H, top * 0.98, 0.55 * H], [0, -1, 0], 0.10 * s, 2.2 * s, 2, 240)
+      ];
+    },
+
+    /* Фонтан: один поток бьёт вверх из центра */
+    fountain: function (L) {
+      var s = L.scale;
+      return [
+        src([0, L.min[1] + 0.10 * s, 0], [0, 1, 0], 0.09 * s, 5.4 * s, 0, 1100)
+      ];
+    },
+
+    /* Водоворот */
+    whirl: function (L) {
+      var s = L.scale, H = L.half, top = L.wallTop;
+      return [
+        src([0.62 * H, top * 0.90, 0.10 * H], [0, -1, 0], 0.13 * s, 2.6 * s, 0, 700)
+      ];
+    },
+
+    /* Снегопад: единственный источник — снег */
+    snowfall: function (L) {
+      var s = L.scale;
       var c = L.center || [0, 0, 0];
-      return [{
-        id: 's1',
-        pos: [c[0], c[1] + L.radius * 0.70, c[2]],
-        dir: [0, -1, 0], radius: L.radius * 0.34,
-        speed: 0.30 * s, type: 4, rate: 320,
-        enabled: true, acc: 0
-      }];
+      return [
+        src([c[0], c[1] + L.radius * 0.72, c[2]], [0, -1, 0],
+          L.radius * 0.62, 0.12 * s, 4, 240)
+      ];
+    },
+
+    /* Извержение: лава фонтаном вверх из жерла */
+    eruption: function (L) {
+      var s = L.scale;
+      var y = L.floorY + L.cone.h;
+      return [
+        src([0, y + 0.20 * s, 0], [0, 1, 0], 0.15 * s, 5.6 * s, 2, 1200),
+        src([0, y + 0.30 * s, 0], [0.20, 1, 0.12], 0.10 * s, 4.8 * s, 2, 420)
+      ];
+    },
+
+    /* Река: горизонтальный поток с края */
+    river: function (L) {
+      var s = L.scale, H = L.half;
+      var y = L.min[1] + 0.18 * s;
+      return [
+        src([-H * 0.92, y, 0], [1, 0, 0], 0.22 * s, 4.2 * s, 0, 1000)
+      ];
     }
-    return [
-      { id: 's1', pos: [-0.52 * H, top * 0.80, 0.12 * H], dir: [0, -1, 0], radius: 0.10 * s, speed: 2.4 * s, type: 0, rate: 300, enabled: true, acc: 0 },
-      { id: 's2', pos: [0.55 * H, top * 0.86, -0.15 * H], dir: [0, -1, 0], radius: 0.09 * s, speed: 2.6 * s, type: 1, rate: 230, enabled: true, acc: 0 },
-      { id: 's3', pos: [0.03 * H, top * 0.92, 0.52 * H], dir: [0, -1, 0], radius: 0.085 * s, speed: 2.2 * s, type: 3, rate: 190, enabled: true, acc: 0 }
-    ];
+  };
+
+  World.SCENARIOS = {
+    city_mini: ['flood', 'tsunami', 'rain', 'mix'],
+    city_mid: ['flood', 'tsunami', 'rain', 'mix'],
+    city_big: ['flood', 'tsunami', 'rain', 'mix'],
+    tank: ['mix', 'fountain', 'whirl'],
+    sphere: ['snowfall'],
+    volcano: ['eruption', 'rain'],
+    open: ['river', 'rain', 'mix']
+  };
+
+  World.scenarioName = function (k) { return T('scen.' + k); };
+
+  World.buildScenario = function (key, levelKey) {
+    SID = 0;
+    var L = World.LEVELS[levelKey] || World.LEVELS.city_mini;
+    var fn = SCEN[key] || SCEN.flood;
+    var list = fn(L);
+    // на крупных уровнях поток должен быть плотнее, иначе он тонет в масштабе
+    var k = Math.max(1, Math.sqrt(L.scale));
+    list.forEach(function (s) {
+      s.rate = Math.min(1600, Math.round(s.rate * k));
+    });
+    return list;
+  };
+
+  World.defaultScenario = function (levelKey) {
+    var list = World.SCENARIOS[levelKey];
+    return (list && list[0]) || 'flood';
+  };
+
+  World.defaultSources = function (levelKey, scenarioKey) {
+    return World.buildScenario(scenarioKey || World.defaultScenario(levelKey), levelKey);
   };
 
   /* ---------------- зонд жидкости (карта высот + поток) ---------------- */
@@ -367,7 +517,6 @@
       }
     }
 
-    // сглаживание: одиночные струи не должны «поднимать» уровень поверхности
     if (!this._sh) {
       this._sh = new Float32Array(sz);
       this._svx = new Float32Array(sz);
@@ -561,11 +710,11 @@
       return o && typeof o === 'object' && o.kind && Array.isArray(o.pos);
     }).map(function (o) {
       if (!Array.isArray(o.color)) o.color = [0.4, 0.45, 0.5];
-      if (o.kind === 'building' || o.kind === 'car') {
+      if (o.kind === 'building' || o.kind === 'car' || o.kind === 'tree' || o.kind === 'house') {
         if (!Array.isArray(o.size)) o.size = [0.15, 0.25, 0.15];
         o.rot = o.rot || 0;
       }
-      if (o.kind === 'sphere' && typeof o.r !== 'number') o.r = 0.2;
+      if ((o.kind === 'sphere' || o.kind === 'mound' || o.kind === 'snowman') && typeof o.r !== 'number') o.r = 0.2;
       if (o.kind === 'portal') {
         if (!Array.isArray(o.normal)) o.normal = [0, 1, 0];
         if (typeof o.r !== 'number') o.r = 0.19;

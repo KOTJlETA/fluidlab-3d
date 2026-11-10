@@ -4,15 +4,14 @@
   var FS = window.FS;
   var UI = (FS.UI = {});
   var World = FS.World;
+  var T = function (k) { return FS.I18N.t(k); };
 
-  var TYPES = [
-    { name: 'Вода', css: '#2173d1' },
-    { name: 'Нефть', css: '#a86a1a' },
-    { name: 'Лава', css: '#ff5210' },
-    { name: 'Слизь', css: '#33d961' },
-    { name: 'Снег', css: '#eef4ff' }
-  ];
-  UI.TYPES = TYPES;
+  function typeItems() {
+    return World.TYPES.map(function (t) {
+      return { name: World.typeName(World.TYPES.indexOf(t)), css: t.css, key: t.key };
+    });
+  }
+  UI.typeItems = typeItems;
 
   function el(tag, cls, html) {
     var e = document.createElement(tag);
@@ -108,18 +107,17 @@
     return { input: inp, set: function (v) { inp.value = v; val.textContent = fmt(v); } };
   };
 
-  UI.chips = function (parent, items, active, onPick) {
-    var wrap = el('div', 'chips');
+  UI.chips = function (parent, items, active, onPick, cls) {
+    var wrap = el('div', 'chips' + (cls ? ' ' + cls : ''));
     items.forEach(function (it, i) {
       var c = el('button', 'chip' + (i === active ? ' active' : ''), it.name);
-      if (i === active) { c.style.background = it.css; c.style.borderColor = it.css; }
+      if (i === active && it.css) { c.style.background = it.css; c.style.borderColor = it.css; }
       c.addEventListener('click', function () {
         wrap.querySelectorAll('.chip').forEach(function (x) {
           x.classList.remove('active'); x.style.background = ''; x.style.borderColor = '';
         });
         c.classList.add('active');
-        c.style.background = it.css;
-        c.style.borderColor = it.css;
+        if (it.css) { c.style.background = it.css; c.style.borderColor = it.css; }
         onPick(i);
       });
       wrap.appendChild(c);
@@ -140,26 +138,58 @@
     return body;
   };
 
+  /* ---------- режим работы ---------- */
+
+  var ICON_HAND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V5.6a1.6 1.6 0 0 1 3.2 0V11"/><path d="M11.2 11V4.4a1.6 1.6 0 0 1 3.2 0V11"/><path d="M14.4 11.2V6.6a1.6 1.6 0 0 1 3.2 0v7.6A6.2 6.2 0 0 1 11.4 20h-.8A5.6 5.6 0 0 1 5 14.4V12a1.6 1.6 0 0 1 3.2 0"/></svg>';
+  var ICON_CURSOR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.2l14 7.6-6.1 1.6L10 19.4z"/></svg>';
+
+  UI.buildModes = function (host, app) {
+    if (!host) return;
+    host.innerHTML = '';
+    var row = el('div', 'modes');
+    [['nav', ICON_HAND, 'mode.nav', 'mode.nav.tip'],
+     ['edit', ICON_CURSOR, 'mode.edit', 'mode.edit.tip']].forEach(function (m) {
+      var b = el('button', 'modebtn' + (app.mode === m[0] ? ' active' : ''));
+      b.innerHTML = m[1] + '<span>' + T(m[2]) + '</span>';
+      b.setAttribute('data-tip', T(m[3]));
+      b.addEventListener('click', function () { app.setMode(m[0]); });
+      row.appendChild(b);
+    });
+    host.appendChild(row);
+  };
+
+  UI.buildLanguages = function (host, app) {
+    if (!host) return;
+    host.innerHTML = '';
+    var items = [{ name: 'English', css: '' }, { name: 'Русский', css: '' }];
+    var cur = FS.I18N.lang === 'ru' ? 1 : 0;
+    UI.chips(host, items, cur, function (i) {
+      app.setLang(i === 1 ? 'ru' : 'en');
+    }, 'wide');
+  };
+
   /* ---------- список источников ---------- */
 
   UI.buildSources = function (host, app) {
     host.innerHTML = '';
     var st = app.state;
+    var items = typeItems();
 
     st.sources.forEach(function (src, i) {
+      var ti = Math.min(src.type, items.length - 1);
       var card = el('div', 'src' + (src.enabled ? ' on' : '') + (app.isSelected('source', src.id) ? ' sel' : ''));
 
       var head = el('div', 'src-head');
       var dot = el('div', 'dot');
-      dot.style.background = TYPES[src.type].css;
-      dot.style.color = TYPES[src.type].css;
+      dot.style.background = items[ti].css;
+      dot.style.color = items[ti].css;
       head.appendChild(dot);
 
-      var nm = el('div', 'src-name', 'Поток ' + (i + 1) + ' <small>· ' + TYPES[src.type].name + '</small>');
+      var nm = el('div', 'src-name', T('src.flow') + ' ' + (i + 1) + ' <small>· ' + items[ti].name + '</small>');
       head.appendChild(nm);
 
       var pick = el('button', 'mini', '✥');
-      pick.title = 'Выбрать (стрелки для перемещения)';
+      pick.title = T('src.select');
       pick.addEventListener('click', function (e) { e.stopPropagation(); app.select('source', src.id); });
       head.appendChild(pick);
 
@@ -174,18 +204,18 @@
       head.appendChild(sw);
       card.appendChild(head);
 
-      UI.chips(card, TYPES, src.type, function (ti) {
-        src.type = ti;
-        dot.style.background = TYPES[ti].css;
-        dot.style.color = TYPES[ti].css;
-        nm.innerHTML = 'Поток ' + (i + 1) + ' <small>· ' + TYPES[ti].name + '</small>';
+      UI.chips(card, items, ti, function (k) {
+        src.type = k;
+        dot.style.background = items[k].css;
+        dot.style.color = items[k].css;
+        nm.innerHTML = T('src.flow') + ' ' + (i + 1) + ' <small>· ' + items[k].name + '</small>';
         app.changed();
       });
 
       UI.slider(card, {
-        label: 'Интенсивность', min: 40, max: 1400, step: 10, value: src.rate,
-        tip: 'Сколько частиц в секунду источник выбрасывает. Больше — плотнее струя и выше нагрузка на GPU.',
-        fmt: function (v) { return Math.round(v) + '/с'; },
+        label: T('src.rate'), min: 40, max: 1600, step: 10, value: src.rate,
+        tip: T('src.rate.tip'),
+        fmt: function (v) { return Math.round(v) + '/s'; },
         onInput: function (v) { src.rate = v; app.changed(); }
       });
 
@@ -193,7 +223,7 @@
       host.appendChild(card);
     });
 
-    var add = el('button', 'btn', '+ Добавить источник' + (st.sources.length >= 10 ? ' (макс. 10)' : ''));
+    var add = el('button', 'btn', T('src.add') + (st.sources.length >= 10 ? T('src.max') : ''));
     if (st.sources.length >= 10) add.disabled = true;
     add.addEventListener('click', function () { app.addSource(); });
     host.appendChild(add);
@@ -201,26 +231,23 @@
 
   /* ---------- список объектов ---------- */
 
-  var KIND_NAMES = {
-    sphere: 'Сфера', building: 'Здание', car: 'Машина', portal: 'Портал', field: 'Поле'
-  };
-  UI.KIND_NAMES = KIND_NAMES;
+  var KIND_KEYS = ['sphere', 'building', 'car', 'tree', 'house', 'snowman', 'portal', 'field'];
+  UI.KIND_KEYS = KIND_KEYS;
 
   UI.buildObjects = function (host, app) {
     host.innerHTML = '';
     var st = app.state;
 
     var adds = el('div', 'btnrow wrap');
-    [['sphere', 'Сфера'], ['building', 'Здание'], ['car', 'Машина'],
-     ['portal', 'Портал'], ['field', 'Поле']].forEach(function (k) {
-      var b = el('button', 'btn sm', '+ ' + k[1]);
-      b.addEventListener('click', function () { app.addObject(k[0]); });
+    KIND_KEYS.forEach(function (k) {
+      var b = el('button', 'btn sm', '+ ' + T('kind.' + k));
+      b.addEventListener('click', function () { app.addObject(k); });
       adds.appendChild(b);
     });
     host.appendChild(adds);
 
     if (st.objects.length === 0) {
-      host.appendChild(el('div', 'empty', 'Объектов нет'));
+      host.appendChild(el('div', 'empty', T('obj.empty')));
       return;
     }
 
@@ -230,9 +257,9 @@
       var sw = el('span', 'swatch');
       sw.style.background = 'rgb(' + o.color.map(function (c) { return Math.round(c * 255); }).join(',') + ')';
       row.appendChild(sw);
-      var name = KIND_NAMES[o.kind] || o.kind;
-      if (o.kind === 'field') name += ' · ' + (World.FIELD_MODES[o.mode] || { name: '' }).name;
-      if (o.kind === 'car' && o.dynamic) name += ' · плавает';
+      var name = T('kind.' + o.kind);
+      if (o.kind === 'field') name += ' · ' + World.fieldName(o.mode);
+      if (o.kind === 'car' && o.dynamic) name += ' · ' + T('obj.floats');
       row.appendChild(el('span', 'objname', name));
       var del = el('button', 'mini del', '×');
       del.addEventListener('click', function (e) { e.stopPropagation(); app.deleteObject(o.id); });
@@ -261,8 +288,12 @@
       if (!src) { app.selected = null; host.classList.remove('show'); return; }
     }
 
+    var s = (app.sim && app.sim.scale) || 1;
+    var half = (app.sim && app.sim.level && app.sim.level.half) || 2;
+    var lim = half * 1.25;
+
     var head = el('div', 'insp-head');
-    var title = obj ? (KIND_NAMES[obj.kind] || obj.kind) : 'Источник';
+    var title = obj ? T('kind.' + obj.kind) : T('sec.sources');
     head.appendChild(el('h3', null, title));
     var close = el('button', 'mini', '×');
     close.addEventListener('click', function () { app.select(null); });
@@ -272,15 +303,13 @@
     var body = el('div', 'insp-body');
     host.appendChild(body);
 
-    var changed = function () { app.changed(); app.rebuildLists(); };
-
     // позиция
     var posHost = el('div');
     body.appendChild(posHost);
     ['X', 'Y', 'Z'].forEach(function (ax, i) {
       UI.slider(posHost, {
-        label: 'Позиция ' + ax, min: -2.2, max: 2.2, step: 0.01, value: (obj || src).pos[i],
-        tip: 'Положение объекта по оси ' + ax + '. Можно двигать и стрелками прямо в сцене.',
+        label: T('obj.pos') + ' ' + ax, min: -lim, max: lim, step: lim / 200, value: (obj || src).pos[i],
+        tip: T('obj.pos') + ' ' + ax,
         fmt: function (v) { return v.toFixed(2); },
         onInput: function (v) { (obj || src).pos[i] = v; app.changed(); }
       });
@@ -292,67 +321,58 @@
       var yaw = Math.atan2(dir[0], dir[2]) * 180 / Math.PI;
 
       UI.slider(body, {
-        label: 'Поворот струи', min: -180, max: 180, step: 1, value: yaw,
-        tip: 'Азимут направления выброса частиц, градусы. 0 — струя летит вдоль оси Z.',
+        label: T('src.yaw'), min: -180, max: 180, step: 1, value: yaw, tip: T('src.yaw.tip'),
         fmt: function (v) { return Math.round(v) + '°'; },
         onInput: function (v) { setDir(src, v, pitch); }
       });
       UI.slider(body, {
-        label: 'Наклон струи', min: -90, max: 90, step: 1, value: pitch,
-        tip: 'Вертикальный угол выброса. −90° — строго вниз, 0° — горизонтально, +90° — вверх.',
+        label: T('src.pitch'), min: -90, max: 90, step: 1, value: pitch, tip: T('src.pitch.tip'),
         fmt: function (v) { return Math.round(v) + '°'; },
         onInput: function (v) { setDir(src, yaw, v); }
       });
       UI.slider(body, {
-        label: 'Скорость выброса', min: 0, max: 6, step: 0.05, value: src.speed,
-        tip: 'Начальная скорость частиц, м/с. Влияет на дальность полёта струи и силу удара.',
-        fmt: function (v) { return v.toFixed(2) + ' м/с'; },
+        label: T('src.speed'), min: 0, max: 12 * s, step: 0.05 * s, value: src.speed, tip: T('src.speed.tip'),
+        fmt: function (v) { return v.toFixed(2) + ' m/s'; },
         onInput: function (v) { src.speed = v; app.changed(); }
       });
       UI.slider(body, {
-        label: 'Радиус сопла', min: 0.03, max: 0.35, step: 0.005, value: src.radius,
-        tip: 'Толщина струи в метрах. Широкое сопло даёт плотный поток, узкое — тонкую струйку.',
-        fmt: function (v) { return v.toFixed(3) + ' м'; },
+        label: T('src.radius'), min: 0.03 * s, max: 0.5 * s, step: 0.005 * s, value: src.radius, tip: T('src.radius.tip'),
+        fmt: function (v) { return v.toFixed(3) + ' m'; },
         onInput: function (v) { src.radius = v; app.changed(); }
       });
 
-      var del = el('button', 'btn danger', 'Удалить источник');
+      var del = el('button', 'btn danger', T('src.delete'));
       del.addEventListener('click', function () { app.deleteSource(src.id); });
       body.appendChild(del);
     }
 
     if (obj) {
-      if (obj.kind === 'sphere') {
+      if (obj.kind === 'sphere' || obj.kind === 'mound' || obj.kind === 'snowman') {
         UI.slider(body, {
-          label: 'Радиус', min: 0.04, max: 0.6, step: 0.005, value: obj.r,
-          tip: 'Радиус сферы-препятствия. Жидкость обтекает её и скатывается по поверхности.',
-          fmt: function (v) { return v.toFixed(3) + ' м'; },
+          label: T('obj.radius'), min: 0.04 * s, max: 1.2 * s, step: 0.005 * s, value: obj.r, tip: T('obj.radius.tip'),
+          fmt: function (v) { return v.toFixed(3) + ' m'; },
           onInput: function (v) { obj.r = v; app.changed(); }
         });
       }
 
-      if (obj.kind === 'building' || obj.kind === 'car') {
+      if (obj.kind === 'building' || obj.kind === 'car' || obj.kind === 'tree' || obj.kind === 'house') {
         UI.slider(body, {
-          label: 'Ширина', min: 0.03, max: 0.5, step: 0.005, value: obj.size[0],
-          tip: 'Полуразмер по X. Размеры задаются как половина стороны.',
+          label: T('obj.width'), min: 0.03 * s, max: 0.8 * s, step: 0.005 * s, value: obj.size[0], tip: T('obj.width.tip'),
           fmt: function (v) { return v.toFixed(3); },
           onInput: function (v) { obj.size[0] = v; app.changed(); }
         });
         UI.slider(body, {
-          label: 'Высота', min: 0.03, max: 0.8, step: 0.005, value: obj.size[1],
-          tip: 'Полуразмер по Y — половина высоты объекта.',
+          label: T('obj.height'), min: 0.03 * s, max: 1.2 * s, step: 0.005 * s, value: obj.size[1], tip: T('obj.height.tip'),
           fmt: function (v) { return v.toFixed(3); },
           onInput: function (v) { obj.size[1] = v; app.changed(); }
         });
         UI.slider(body, {
-          label: 'Глубина', min: 0.03, max: 0.5, step: 0.005, value: obj.size[2],
-          tip: 'Полуразмер по Z — половина глубины объекта.',
+          label: T('obj.depth'), min: 0.03 * s, max: 0.8 * s, step: 0.005 * s, value: obj.size[2], tip: T('obj.depth.tip'),
           fmt: function (v) { return v.toFixed(3); },
           onInput: function (v) { obj.size[2] = v; app.changed(); }
         });
         UI.slider(body, {
-          label: 'Поворот', min: -180, max: 180, step: 1, value: (obj.rot || 0) * 180 / Math.PI,
-          tip: 'Поворот вокруг вертикальной оси, градусы.',
+          label: T('obj.rot'), min: -180, max: 180, step: 1, value: (obj.rot || 0) * 180 / Math.PI, tip: T('obj.rot.tip'),
           fmt: function (v) { return Math.round(v) + '°'; },
           onInput: function (v) { obj.rot = v * Math.PI / 180; app.changed(); }
         });
@@ -360,7 +380,7 @@
 
       if (obj.kind === 'car') {
         var tg = el('div', 'toggle-row');
-        tg.appendChild(el('span', null, 'Физичная (плавает и её сносит потоком)'));
+        tg.appendChild(el('span', null, T('obj.floating')));
         var sw = el('div', 'switch' + (obj.dynamic ? ' on' : ''));
         sw.addEventListener('click', function () {
           obj.dynamic = !obj.dynamic;
@@ -373,17 +393,15 @@
 
       if (obj.kind === 'portal') {
         UI.slider(body, {
-          label: 'Радиус воронки', min: 0.08, max: 0.4, step: 0.005, value: obj.r,
-          tip: 'Частица, попавшая в этот радиус и летящая «внутрь», мгновенно переносится ко второму порталу пары.',
-          fmt: function (v) { return v.toFixed(3) + ' м'; },
+          label: T('obj.radius'), min: 0.08 * s, max: 0.6 * s, step: 0.005 * s, value: obj.r, tip: T('obj.radius.tip'),
+          fmt: function (v) { return v.toFixed(3) + ' m'; },
           onInput: function (v) { obj.r = v; app.changed(); }
         });
         var nHost = el('div');
         body.appendChild(nHost);
         ['X', 'Y', 'Z'].forEach(function (ax, i) {
           UI.slider(nHost, {
-            label: 'Нормаль ' + ax, min: -1, max: 1, step: 0.05, value: obj.normal[i],
-            tip: 'Направление «лица» портала. Частица вылетает из второго портала вдоль его нормали.',
+            label: T('obj.normal') + ' ' + ax, min: -1, max: 1, step: 0.05, value: obj.normal[i], tip: T('obj.normal.tip'),
             fmt: function (v) { return v.toFixed(2); },
             onInput: function (v) {
               obj.normal[i] = v;
@@ -393,15 +411,17 @@
             }
           });
         });
-        var pair = el('div', 'hintline', 'Пара: ' + (obj.link || '—'));
-        body.appendChild(pair);
+        body.appendChild(el('div', 'hintline', T('obj.pair') + ': ' + (obj.link || '—')));
       }
 
       if (obj.kind === 'field') {
         var modes = Object.keys(World.FIELD_MODES).map(function (k) {
-          return { name: World.FIELD_MODES[k].name, css: '#' + World.FIELD_MODES[k].color.map(function (c) {
-            return ('0' + Math.round(c * 255).toString(16)).slice(-2);
-          }).join('') , key: k };
+          return {
+            name: World.fieldName(k), key: k,
+            css: '#' + World.FIELD_MODES[k].color.map(function (c) {
+              return ('0' + Math.round(c * 255).toString(16)).slice(-2);
+            }).join('')
+          };
         });
         var cur = 0;
         modes.forEach(function (m, i) { if (m.key === obj.mode) cur = i; });
@@ -411,14 +431,12 @@
           app.changed(); app.rebuildLists(); app.rebuildInspector();
         });
         UI.slider(body, {
-          label: 'Радиус действия', min: 0.08, max: 1.0, step: 0.01, value: obj.radius,
-          tip: 'Радиус сферы влияния. Внутри неё сила плавно нарастает к центру.',
-          fmt: function (v) { return v.toFixed(2) + ' м'; },
+          label: T('obj.fieldRadius'), min: 0.08 * s, max: 2.0 * s, step: 0.01 * s, value: obj.radius, tip: T('obj.fieldRadius.tip'),
+          fmt: function (v) { return v.toFixed(2) + ' m'; },
           onInput: function (v) { obj.radius = v; app.changed(); }
         });
         UI.slider(body, {
-          label: 'Сила', min: 0, max: 40, step: 0.5, value: obj.strength,
-          tip: 'Интенсивность воздействия на частицы: отталкивание, притяжение, ускорение вдоль направления или торможение.',
+          label: T('obj.strength'), min: 0, max: 60, step: 0.5, value: obj.strength, tip: T('obj.strength.tip'),
           fmt: function (v) { return v.toFixed(1); },
           onInput: function (v) { obj.strength = v; app.changed(); }
         });
@@ -427,8 +445,7 @@
           body.appendChild(dHost);
           ['X', 'Y', 'Z'].forEach(function (ax, i) {
             UI.slider(dHost, {
-              label: 'Направление ' + ax, min: -1, max: 1, step: 0.05, value: obj.dir[i],
-              tip: 'Вектор ускорения. Частицы внутри радиуса получают импульс вдоль этого направления.',
+              label: T('obj.dir') + ' ' + ax, min: -1, max: 1, step: 0.05, value: obj.dir[i], tip: T('obj.dir.tip'),
               fmt: function (v) { return v.toFixed(2); },
               onInput: function (v) {
                 obj.dir[i] = v;
@@ -441,7 +458,7 @@
         }
       }
 
-      var del2 = el('button', 'btn danger', 'Удалить объект');
+      var del2 = el('button', 'btn danger', T('obj.delete'));
       del2.addEventListener('click', function () { app.deleteObject(obj.id); });
       body.appendChild(del2);
     }
@@ -461,38 +478,32 @@
     var ph = app.state.physics;
 
     UI.slider(host, {
-      label: 'Гравитация', min: -22, max: 2, step: 0.1, value: ph.gravity,
-      tip: 'Ускорение свободного падения. Отрицательное тянет жидкость вниз; положительное переворачивает мир и жидкость «падает» вверх.',
-      fmt: function (v) { return v.toFixed(1) + ' м/с²'; },
+      label: T('ph.gravity'), min: -22, max: 2, step: 0.1, value: ph.gravity, tip: T('ph.gravity.tip'),
+      fmt: function (v) { return v.toFixed(1) + ' m/s²'; },
       onInput: function (v) { ph.gravity = v; app.applyPhysics(); }
     });
     UI.slider(host, {
-      label: 'Вязкость', min: 0, max: 2.5, step: 0.05, value: ph.viscosity,
-      tip: 'Насколько сильно соседние частицы тянут друг друга за собой (сглаживание XSPH). 0 — вода разлетается и брызгает, 100 % — густая жидкость, 250 % — почти мёд.',
+      label: T('ph.viscosity'), min: 0, max: 2.5, step: 0.05, value: ph.viscosity, tip: T('ph.viscosity.tip'),
       fmt: function (v) { return (v * 100).toFixed(0) + '%'; },
       onInput: function (v) { ph.viscosity = v; app.applyPhysics(); }
     });
     UI.slider(host, {
-      label: 'Поверхностное натяжение', min: 0, max: 3, step: 0.05, value: ph.tension,
-      tip: 'Искусственное давление s_corr. Не даёт частицам слипаться в комки и разлетаться пылью: при 0 жидкость рыхлая, при 300 % — плотная и «резиновая».',
+      label: T('ph.tension'), min: 0, max: 3, step: 0.05, value: ph.tension, tip: T('ph.tension.tip'),
       fmt: function (v) { return (v * 100).toFixed(0) + '%'; },
       onInput: function (v) { ph.tension = v; app.applyPhysics(); }
     });
     UI.slider(host, {
-      label: 'Итерации решателя', min: 1, max: 4, step: 1, value: ph.iterations,
-      tip: 'Сколько раз за кадр решается условие несжимаемости. Больше итераций — точнее давление и меньше «пружинистость», но дороже по времени GPU.',
+      label: T('ph.iterations'), min: 1, max: 4, step: 1, value: ph.iterations, tip: T('ph.iterations.tip'),
       fmt: function (v) { return v.toFixed(0); },
       onInput: function (v) { ph.iterations = v; app.applyPhysics(); }
     });
     UI.slider(host, {
-      label: 'Скорость времени', min: 0.15, max: 2, step: 0.05, value: ph.timeScale,
-      tip: 'Множитель шага симуляции. Меньше 1 — замедленная съёмка, больше 1 — ускорение (растёт риск нестабильности).',
+      label: T('ph.timeScale'), min: 0.15, max: 2, step: 0.05, value: ph.timeScale, tip: T('ph.timeScale.tip'),
       fmt: function (v) { return '×' + v.toFixed(2); },
       onInput: function (v) { ph.timeScale = v; app.changed(); }
     });
     UI.slider(host, {
-      label: 'Крупность частиц', min: 0.6, max: 1.8, step: 0.02, value: ph.particleSize,
-      tip: 'Визуальный радиус сфер при рендере. Не влияет на физику — только на то, насколько плотной выглядит поверхность жидкости.',
+      label: T('ph.particleSize'), min: 0.6, max: 1.8, step: 0.02, value: ph.particleSize, tip: T('ph.particleSize.tip'),
       fmt: function (v) { return (v * 100).toFixed(0) + '%'; },
       onInput: function (v) { ph.particleSize = v; app.applyPhysics(); }
     });
@@ -504,12 +515,11 @@
     host.innerHTML = '';
     var st = app.state;
     UI.slider(host, {
-      label: 'Количество частиц', min: 4096, max: 131072, step: 4096, value: st.count,
-      tip: 'Размер парка частиц. До 128 000 — для мощных видеокарт: качество поверхности и детализация брызг растут, но время кадра и объём данных, читаемых с GPU, тоже.',
+      label: T('perf.count'), min: 4096, max: 131072, step: 4096, value: st.count, tip: T('perf.count.tip'),
       fmt: function (v) { return (v / 1024).toFixed(0) + 'k'; },
       onInput: function (v) { app.pendingCount = v; }
     });
-    var b = el('button', 'btn', 'Применить количество');
+    var b = el('button', 'btn', T('perf.apply'));
     b.style.width = '100%';
     b.addEventListener('click', function () {
       if (app.pendingCount && app.pendingCount !== app.state.count) {
@@ -520,12 +530,16 @@
     host.appendChild(b);
   };
 
+  /* ---------- уровни / сценарии / небо ---------- */
+
   UI.buildLevels = function (host, app) {
+    if (!host) return;
     host.innerHTML = '';
     var wrap = el('div', 'chips wide');
     Object.keys(World.LEVELS).forEach(function (key) {
       var L = World.LEVELS[key];
-      var c = el('button', 'chip' + (app.state.level === key ? ' active' : ''), L.name);
+      var c = el('button', 'chip' + (app.state.level === key ? ' active' : ''),
+        FS.I18N.t('level.' + key));
       if (app.state.level === key) { c.style.background = '#35d2e8'; c.style.borderColor = '#35d2e8'; c.style.color = '#041018'; }
       c.addEventListener('click', function () { app.setLevel(key); });
       wrap.appendChild(c);
@@ -533,11 +547,26 @@
     host.appendChild(wrap);
   };
 
+  UI.buildScenarios = function (host, app) {
+    if (!host) return;
+    host.innerHTML = '';
+    var list = World.SCENARIOS[app.state.level] || [];
+    var wrap = el('div', 'chips wide');
+    list.forEach(function (key) {
+      var c = el('button', 'chip' + (app.state.scenario === key ? ' active' : ''), World.scenarioName(key));
+      if (app.state.scenario === key) { c.style.background = '#7ce8b0'; c.style.borderColor = '#7ce8b0'; c.style.color = '#04180f'; }
+      c.addEventListener('click', function () { app.setScenario(key); });
+      wrap.appendChild(c);
+    });
+    host.appendChild(wrap);
+  };
+
   UI.buildSkies = function (host, app) {
+    if (!host) return;
     host.innerHTML = '';
     var wrap = el('div', 'chips wide');
-    Object.keys(World.SKIES).forEach(function (key) {
-      var c = el('button', 'chip' + (app.state.skybox === key ? ' active' : ''), World.SKIES[key]);
+    World.SKIES.forEach(function (key) {
+      var c = el('button', 'chip' + (app.state.skybox === key ? ' active' : ''), World.skyName(key));
       if (app.state.skybox === key) { c.style.background = '#35d2e8'; c.style.borderColor = '#35d2e8'; c.style.color = '#041018'; }
       c.addEventListener('click', function () { app.setSkybox(key); });
       wrap.appendChild(c);

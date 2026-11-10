@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>FluidLab 3D — симуляция жидкости в реальном времени</title>
+<title data-i18n="app.title">FluidLab 3D</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <div id="loading">
   <div class="spinner"></div>
   <div class="ltitle">FluidLab 3D</div>
-  <div class="lsub">инициализация GPU-решателя…</div>
+  <div class="lsub" data-i18n="app.loading">initialising GPU solver…</div>
 </div>
 
 <div id="panel">
@@ -21,84 +21,101 @@
       <div class="logo"></div>
       <div>
         <h1>FLUID<span>LAB</span></h1>
-        <div class="tag">Position Based Fluids · GPU</div>
+        <div class="tag" data-i18n="app.tagline">Position Based Fluids · GPU</div>
       </div>
     </div>
-    <button id="collapse" title="Свернуть панель">‹</button>
+    <button id="collapse" title="Hide panel">‹</button>
   </header>
 
   <div class="stats">
-    <div class="stat"><b id="s-fps">–</b><span>FPS</span></div>
-    <div class="stat"><b id="s-part">–</b><span>частиц</span></div>
-    <div class="stat"><b id="s-ms">–</b><span>мс</span></div>
+    <div class="stat"><b id="s-fps">–</b><span data-i18n="stats.fps">FPS</span></div>
+    <div class="stat"><b id="s-part">–</b><span data-i18n="stats.particles">particles</span></div>
+    <div class="stat"><b id="s-ms">–</b><span data-i18n="stats.ms">ms</span></div>
   </div>
 
   <div class="scroll">
     <details open>
-      <summary>Уровень</summary>
+      <summary data-i18n="sec.mode">Mode</summary>
+      <div class="sec-body" id="modes"></div>
+    </details>
+
+    <details open>
+      <summary data-i18n="sec.level">Level</summary>
       <div class="sec-body" id="levels"></div>
     </details>
 
     <details open>
-      <summary>Небо и фон</summary>
+      <summary data-i18n="sec.scenario">Scenario</summary>
+      <div class="sec-body" id="scenarios"></div>
+    </details>
+
+    <details open>
+      <summary data-i18n="sec.sky">Sky &amp; background</summary>
       <div class="sec-body" id="skies"></div>
     </details>
 
     <details open>
-      <summary>Источники</summary>
+      <summary data-i18n="sec.sources">Sources</summary>
       <div class="sec-body" id="sources"></div>
     </details>
 
     <details open>
-      <summary>Объекты сцены</summary>
+      <summary data-i18n="sec.objects">Scene objects</summary>
       <div class="sec-body" id="objects"></div>
     </details>
 
     <details open>
-      <summary>Физика</summary>
+      <summary data-i18n="sec.physics">Physics</summary>
       <div class="sec-body" id="phys"></div>
     </details>
 
     <details>
-      <summary>Производительность</summary>
+      <summary data-i18n="sec.perf">Performance</summary>
       <div class="sec-body" id="perf"></div>
     </details>
 
     <details open>
-      <summary>Сцена</summary>
+      <summary data-i18n="sec.scene">Scene</summary>
       <div class="sec-body">
         <div class="btnrow">
-          <button class="btn primary" id="btn-reset">Сброс жидкости</button>
-          <button class="btn" id="btn-pause">Пауза</button>
+          <button class="btn primary" id="btn-reset" data-i18n="btn.reset">Reset fluid</button>
+          <button class="btn" id="btn-pause" data-i18n="btn.pause">Pause</button>
         </div>
         <div class="btnrow">
-          <button class="btn" id="btn-rotate">Авто-вращение</button>
-          <button class="btn" id="btn-preset">Водоворот</button>
+          <button class="btn" id="btn-rotate" data-i18n="btn.rotate">Auto-orbit</button>
+          <button class="btn" id="btn-preset" data-i18n="btn.vortex">Vortex</button>
         </div>
         <div class="btnrow">
-          <button class="btn" id="btn-clear">Убрать объекты</button>
+          <button class="btn" id="btn-clear" data-i18n="btn.clear">Clear objects</button>
         </div>
         <div class="btnrow">
-          <button class="btn" id="btn-resetall">Сбросить настройки</button>
+          <button class="btn" id="btn-resetall" data-i18n="btn.resetall">Reset settings</button>
         </div>
       </div>
+    </details>
+
+    <details>
+      <summary data-i18n="sec.language">Language</summary>
+      <div class="sec-body" id="langs"></div>
     </details>
   </div>
 
   <footer>
-    <span>ЛКМ — орбита · КОЛЕСО — зум</span>
-    <span>ПКМ / Shift — толкать · клик по объекту — стрелки</span>
+    <span data-i18n="foot.orbit">LMB — orbit · wheel — zoom</span>
+    <span data-i18n="foot.fly">WASD — fly · Q/E — up/down</span>
+    <span data-i18n="foot.push">RMB / Shift — push fluid</span>
   </footer>
 </div>
 
 <div id="inspector"></div>
 
-<button id="expand" title="Показать панель">›</button>
+<button id="expand" title="Show panel">›</button>
 
-<div id="hint">Кликните по объекту, чтобы двигать его стрелками</div>
+<div id="hint" data-i18n="hint.click">Click an object to move it with the arrows</div>
 
 <div id="error" hidden></div>
 
+<script src="js/i18n.js"></script>
 <script src="js/math.js"></script>
 <script src="js/gl.js"></script>
 <script src="js/world.js"></script>

@@ -1,216 +1,80 @@
 # FluidLab 3D
 
-Симуляция жидкости в реальном времени в 3D на **WebGL2** без внешних зависимостей.
-Физика — **Position Based Fluids (PBF)** на GPU, рендер — экранно-пространственная
-реконструкция поверхности (Screen Space Fluid Rendering).
+Real-time 3D fluid simulation in the browser. Pure **WebGL2** — no libraries, no build step, no CDN. Runs straight from `file://` and from GitHub Pages.
 
-**Живая демонстрация:** <https://kotjleta.github.io/fluidlab-3d/>
+**Live demo:** https://kotjleta.github.io/fluidlab-3d/
 
-![preview](preview.png)
+**Русская версия:** [README.ru.md](README.ru.md)
+
+![FluidLab 3D](preview.jpg)
 
 ---
 
-## Запуск
+## What it is
 
-Никакой сборки и установки не требуется.
+A **Position Based Fluids (PBF)** solver runs entirely on the GPU: five fragment passes per frame (predict → density/λ → Δp → velocity), positions and velocities kept in MRT `RGBA32F` targets, neighbour search done by a counting sort on the CPU and uploaded as a grid texture. 131 072 particles can be allocated; 24 576 are active by default.
 
-**Способ 1 — просто открыть файл**
+The liquid is drawn as a screen-space surface: particles write depth and thickness into floating-point targets, depth is dilated and bilaterally blurred, thickness is blurred separately, and the composite adds Fresnel, refraction, Beer–Lambert absorption and a soft specular sheen. The result reads as one continuous, formless mass rather than a pile of spheres.
 
-Двойной клик по `index.html` (Chrome, Edge, Firefox, Opera последних версий).
-Приложение написано на классических `<script>`, поэтому работает прямо с `file://`.
+Besides liquids there is a second category — **granular particles** (snow, sand, dust). They are not part of the PBF solver: they fall under their own gravity and drag, carry no pressure, and are drawn as individual flakes and grains instead of a fluid surface.
 
-**Способ 2 — локальный сервер** (если браузер ограничивает `file://`)
+## Features
+
+- **Liquids:** water, oil, lava, slime — each with its own spacing, viscosity and buoyancy.
+- **Granular:** snow, sand, dust — ballistic particles with per-type gravity and drag.
+- **Levels:** Mini city, Mid city, Giant city, Aquarium, Snow globe, Volcano, Open ground.
+- **Scenarios per level:** Flood / Tsunami / Downpour / Mixed fluids (cities), Mixed / Fountain / Whirlpool (aquarium), Snowfall (snow globe), Eruption / Downpour (volcano), River / Downpour / Mixed (open ground) — no three generic jets everywhere.
+- **Modes:** Navigate (hand) and Edit (cursor); navigation is the default.
+- **Sky presets:** grid, night, sunset, day, nebula, studio, Christmas night.
+- **Obstacles:** buildings with lit windows, cars, trees, snowmen, wooden houses, a volcano cone — all with collision.
+- **Sources and objects** can be added, moved and edited; each object has an inspector.
+- **Two languages:** English and Russian, chosen from the system locale on first launch.
+- **State persists** in `localStorage`.
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| Drag LMB | Orbit the camera |
+| WASD | Fly |
+| Space / Shift | Up / down |
+| Q / E | Up / down (alternative) |
+| Wheel | Zoom |
+| Drag RMB | Push the fluid |
+| Click (Edit mode) | Select an object |
+| Arrows (Edit mode) | Move the selected object |
+
+## Run locally
 
 ```bash
-cd fluidlab-3d
-python -m http.server 8000
+python -m http.server 8080
+# open http://localhost:8080
 ```
 
-Затем открыть <http://localhost:8000>.
+On Windows, `start.bat` opens the file directly and `serve.bat` starts a local server. Opening `index.html` from disk works too — there are no ES modules and no `fetch` calls.
 
-**Требования:** браузер с WebGL2 и поддержкой `EXT_color_buffer_float`
-(есть на любом GPU последних ~10 лет, включая встроенную графику Intel/AMD).
-Если расширение недоступно, приложение покажет понятное сообщение.
-
----
-
-## Управление
-
-| Действие | Что делает |
-|---|---|
-| **ЛКМ + перетаскивание** | Вращение камеры (орбита) |
-| **Колесо мыши** | Приближение / отдаление |
-| **ПКМ + перетаскивание** (или **Shift + ЛКМ**) | Толкать жидкость курсором |
-| **‹** в шапке панели | Свернуть панель |
-
-### Уровни
-
-Арена каждого уровня масштабируется так, чтобы занимать весь кадр: геометрия,
-частицы, скорости и решётка растут вместе (единый коэффициент `scale`).
-
-| Уровень | Что внутри | Пол |
-|---|---|---|
-| **Мини-город** | кольцо башен с горящими окнами, дома, машины | асфальт с разметкой |
-| **Средний город** | больше кварталов и машин | асфальт с разметкой |
-| **Гигантский город** | ~30 зданий + машины, площадь в центре | асфальт с разметкой |
-| **Резервуар** | сферы и колонна | техническая сетка |
-| **Снежный шар** | ёлочки, снеговики, деревянные домики, снегопад | снег |
-| **Открытая площадка** | без стенок, только пол | тёмный бетон |
-
-Пол есть **во всех** уровнях и всегда имеет коллизию — частицы не проваливаются.
-
-### Источники (до 10)
-
-У каждого источника:
-
-* **Вкл/выкл** — тумблер справа в карточке;
-* **Тип жидкости** — Вода / Нефть / Лава / Слизь / Снег (кнопки-чипы);
-* **Интенсивность** — сколько частиц в секунду выбрасывается (40…1400);
-* **✥** — выбрать источник, чтобы двигать его стрелками и менять направление струи.
-
-Кнопки **+ Источник** / **×** добавляют и удаляют источники (максимум 10).
-
-### Физика
-
-| Параметр | Диапазон | Смысл |
-|---|---|---|
-| Гравитация | −22…+2 м/с² | Отрицательная — вниз; можно «перевернуть» мир |
-| Вязкость | 0…250 % | XSPH-вязкость: вода → мёд |
-| Поверхностное натяжение | 0…300 % | Искусственное давление `s_corr` (не даёт частицам слипаться в комки) |
-| Итерации решателя | 1…4 | Больше — жёстче несжимаемость, дороже по времени |
-| Скорость времени | ×0.15…×2 | Масштаб шага симуляции |
-| Крупность частиц | 60…180 % | Визуальный радиус сфер при рендере |
-
-### Объекты сцены
-
-Добавляются в случайное место, каждый можно перетащить:
-
-* **Сфера**, **Здание**, **Машина**, **Ёлка**, **Снеговик**, **Домик**;
-* **Портал** (пара) — частицы, попавшие в один, вылетают из другого с сохранением скорости; рендера «внутри» нет;
-* **Поле** — физическое препятствие: отталкивание, притяжение, ускорение, торможение.
-
-**Перемещение:** клик по объекту → появляются стрелки по трём осям (X — красная,
-Y — зелёная, Z — синяя). Тянуть за стрелку. Параметры выбранного объекта
-(радиус, сила, режим поля, цвет) редактируются в инспекторе.
-
-Машины **физические**: они плавают на поверхности, их толкает поток, они
-разворачиваются по течению и тонут, если жидкости мало.
-
-### Прочее
-
-* **Убрать объекты** — очистить сцену; **Сброс** — заново залить арену;
-* **Пауза**, **Авто-вращение**, **Водоворот**;
-* **Скайбокс** — Сетка / Ночь / Закат / День / Туманность / Студия / Рождество;
-* Все настройки (уровень, скайбокс, источники, объекты, физика, количество
-  частиц) сохраняются в `localStorage` и восстанавливаются после перезагрузки.
-* У каждого ползунка есть иконка **!** — при наведении подробное описание,
-  за что он отвечает и как влияет на симуляцию.
-
----
-
-## Типы жидкостей
-
-| Тип | Цвет | Шаг решётки | Вязкость | Плавучесть |
-|---|---|---|---|---|
-| Вода | синий | 0.082 | 0.10 | нейтральная |
-| Нефть | янтарный | 0.094 (легче) | 0.30 | всплывает |
-| Лава | оранжевый, светится | 0.075 (тяжелее) | 0.55 | тонет |
-| Слизь | зелёный | 0.086 | 0.85 | нейтральная |
-| Снег | белый | 0.088 | 0.42 | почти нейтральная |
-
-Каждый тип имеет собственную целевую плотность в решателе, поэтому фазы
-естественно расслаиваются: нефть собирается сверху, лава опускается на дно.
-В рендере цвет и толщина смешиваются взвешенно, а «горячие» жидкости
-(высокая красная компонента) получают самосвечение.
-
----
-
-## Как это устроено
-
-### Физика: PBF на GPU
-
-Каждый кадр выполняется цепочка фрагментных шейдеров над текстурами `RGBA32F`
-(по одной текстуре на атрибут, разрешение `128 × N/128`, частица = тексель):
-
-1. **Predict** — `v += g·dt`, `x* = x + v·dt`, ограничение скорости, силы мыши/вихря.
-2. **Density / λ** — для каждой частицы считается плотность
-   `ρ_i = Σ_j W(r_ij)` (ядро Poly6) и множитель Лагранжа
-   `λ_i = −C_i / (Σ|∇W|²/n₀² + ε)`, где `C_i = ρ_i/n₀ − 1`.
-3. **Δp** — `Δp_i = 1/n₀ Σ_j (λ_i + λ_j + s_corr) ∇W_ij` (градиент Spiky),
-   плюс выталкивание из препятствий и стенок. Шаги 2–3 повторяются
-   `iterations` раз (метод Якоби).
-4. **Velocity** — `v = (x* − x)/dt`, сглаживание XSPH, отскок от препятствий,
-   запись новых позиций и скоростей через **MRT** (два color attachment).
-
-Поиск соседей: **равномерная сетка** (шаг = радиус сглаживания `h`).
-Сетка строится на CPU — counting sort по ячейкам, ~0.3 мс на 24k частиц, —
-и загружается на GPU двумя текстурами (`start/count` и отсортированные индексы).
-Шейдер обходит 27 соседних ячеек.
-
-Стабилизация: клампинг отрицательной части `C` (иначе свободная поверхность
-«всасывает» частицы и решатель взрывается), клампинг `|λ|` и максимального
-смещения за итерацию.
-
-Источники и рециклинг — на CPU: частицы, ушедшие за границы домена,
-«паркуются» и переиспользуются; чтобы поток не иссякал, самые глубокие
-частицы лужи забираются под новые (это не видно — они под поверхностью).
-
-### Рендер: экранно-пространственная жидкость
-
-1. Частицы рисуются как point-спрайты с записью **линейной глубины сферы**
-   в `RGBA32F` (depth-тест даёт ближайшую поверхность).
-2. Второй проход аддитивно накапливает **толщину и цвет** (`rgb·w`, `w`).
-3. **Двухпроходное билатеральное размытие** глубины; радиус размытия
-   привязан к экранному размеру частицы, поэтому поверхность остаётся
-   гладкой при любом зуме.
-4. **Композит**: нормаль из градиента восстановленной глубины, френель,
-   преломление сцены по нормали, поглощение по Бэру–Ламберту (Бир-Ламберт),
-   зеркальный блик, отражение процедурного неба, самосвечение лавы.
-   Окклюзия — сравнение глубины жидкости с глубиной сцены.
-
-Сцена (пол с сеткой, стеклянные стенки, препятствия) рендерится в отдельный
-таргет с depth-текстурой; жидкость компонуется поверх с преломлением
-и корректной окклюзией.
-
----
-
-## Структура проекта
+## Project layout
 
 ```
-fluidlab-3d/
-├── index.html          разметка и подключение скриптов
-├── css/style.css       интерфейс (тёмная стеклянная панель)
-├── js/
-│   ├── math.js         mat4 / vec3 (перспектива, lookAt, умножение)
-│   ├── gl.js           обёртки WebGL2: программы, текстуры, FBO, uniform-хелперы
-│   ├── shaders.js      все GLSL-программы
-│   ├── sim.js          решатель PBF, сетка соседей, источники, рециклинг
-│   ├── render.js       сцена, point-спрайты, размытие, композит жидкости
-│   └── main.js         камера, интерфейс, цикл кадра, ввод
-└── preview.png
+index.html        markup and panels
+css/style.css     UI styling
+js/math.js        mat4 / vec3 helpers
+js/gl.js          thin WebGL2 wrappers
+js/shaders.js     all GLSL
+js/sim.js         PBF solver, grid, emitters
+js/render.js      render targets and passes
+js/world.js       types, levels, scenarios, props
+js/i18n.js        EN/RU dictionaries
+js/ui.js          panel building and tooltips
+js/gizmo.js       object manipulation gizmo
+js/store.js       localStorage persistence
+js/main.js        app loop, camera, input
 ```
 
----
+## Requirements
 
-## Производительность
+A browser with WebGL2 and `EXT_color_buffer_float` — every current desktop browser and most mobile ones. Without it the app shows a clear error message instead of a blank canvas.
 
-Замеры на RTX 2080 Ti, окно 1600×1000, 24 576 частиц: **60 FPS, ~8 мс/кадр**.
+## License
 
-Что влияет сильнее всего:
-
-* **Количество частиц** (ползунок в разделе «Жидкости») — 4096…32768;
-* **Итерации решателя** — линейно по времени симуляции;
-* **Разрешение окна** — рендер жидкости экранно-пространственный;
-* **Крупность частиц** — размер спрайтов и площадь перекрытия.
-
-Если FPS низкий: уменьшите число частиц до 8192–12288 и итерации до 2.
-
----
-
-## Ограничения
-
-* Одна «жидкость» на пиксель: смешение фаз в рендере — взвешенное по толщине,
-  а не физически корректное многокомпонентное затухание.
-* Препятствия — только аналитические сферы и параллелепипеды (без вращения).
-* Домен замкнут: это резервуар со стеклянными стенками, а не открытая сцена.
-* Симуляция детерминирована только в пределах запуска (есть случайность в спавне).
+MIT.

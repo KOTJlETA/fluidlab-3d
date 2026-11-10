@@ -760,7 +760,7 @@ void main() {
   vec3 col = mix(body, scatter, clamp(0.46 + 0.42 * fres, 0.0, 0.92));
   col = mix(col, env, fres * 0.62);
   col += vec3(1.0) * sp * (0.14 + 0.42 * fres);
-  col += fluidCol * smoothstep(0.55, 1.0, fluidCol.r) * 0.9 * alpha;
+  col += fluidCol * smoothstep(0.55, 1.0, fluidCol.r) * 0.45 * alpha;
 
   vec3 outc = mix(sceneCol, col, alpha);
   // дизеринг убирает полосы 8-битного квантования на плавных градиентах

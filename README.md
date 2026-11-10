@@ -22,13 +22,14 @@ Besides liquids there is a second category — **granular particles** (snow, san
 
 - **Liquids:** water, oil, lava, slime — each with its own spacing, viscosity and buoyancy.
 - **Granular:** snow, sand, dust — ballistic particles with per-type gravity and drag.
-- **Levels:** Mini city, Mid city, Giant city, Aquarium, Snow globe, Volcano, Open ground.
-- **Scenarios per level:** Flood / Tsunami / Downpour / Mixed fluids (cities), Mixed / Fountain / Whirlpool (aquarium), Snowfall (snow globe), Eruption / Downpour (volcano), River / Downpour / Mixed (open ground) — no three generic jets everywhere.
+- **Levels:** Mini city, Mid city, Giant city, Snow globe, Volcano island, Open ground, Portal lab.
+- **Tile-based cities:** every city is a grid of blocks; one building per block, roads between. Building, car and particle sizes are identical on all three city levels — only the number of buildings changes (about 90 / 540 / 2350). Buildings are drawn in a single merged draw call.
+- **Scenarios per level:** Flood / Sewer burst / Tsunami / Downpour / Mixed fluids (cities), Snowfall (snow globe), Eruption / Lava flow (volcano), River / Downpour / Mixed (open ground), Portal loop (portal lab). One source by default; only scenarios that need many (tsunami waves, sewer burst) create several.
 - **Modes:** Navigate (hand) and Edit (cursor); navigation is the default.
 - **Sky presets:** grid, night, sunset, day, nebula, studio, Christmas night.
 - **Obstacles:** buildings with lit windows, cars, trees, snowmen, wooden houses, a volcano cone — all with collision.
 - **Sources and objects** can be added, moved and edited; each object has an inspector.
-- **Two languages:** English and Russian, chosen from the system locale on first launch.
+- **Two languages:** English and Russian, chosen from the system locale on first launch, switchable at any time with the EN / RU toggle in the panel header.
 - **State persists** in `localStorage`.
 
 ## Controls

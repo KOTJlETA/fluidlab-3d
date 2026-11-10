@@ -584,7 +584,7 @@
       var y = L.min[1] + (L.wallTop - L.min[1]) * 0.16;
       // один вал во всю стену
       return [
-        src([-H * 0.99, y, 0], [1, 0, 0], H * 0.98, 3.8, 0, 2600)
+        src([-H * 0.99, y, 0], [1, 0, 0], H * 0.98, 4.6, 0, 3400)
       ];
     },
 
@@ -915,7 +915,7 @@
       // машина НЕ плавает: только гравитация и пол, вода её толкает и опрокидывает
       v[1] -= g * dt;
 
-      var k = 3.6 * sub;
+      var k = 7.5 * sub;
       v[0] += (smp.vx - v[0]) * k * dt;
       v[2] += (smp.vz - v[2]) * k * dt;
 
@@ -924,12 +924,12 @@
       var along = smp.vx * fx + smp.vz * fz;
       var side = smp.vx * fz - smp.vz * fx;
       o.tilt = o.tilt || 0; o.roll = o.roll || 0;
-      o.tiltVel = (o.tiltVel || 0) + (along * 2.6 - o.tilt * 3.0) * sub * dt;
-      o.rollVel = (o.rollVel || 0) + (side * 2.6 - o.roll * 3.0) * sub * dt;
+      o.tiltVel = (o.tiltVel || 0) + (along * 6.5 - o.tilt * 2.2) * sub * dt;
+      o.rollVel = (o.rollVel || 0) + (side * 6.5 - o.roll * 2.2) * sub * dt;
       o.tilt = Math.max(-3.14, Math.min(3.14, o.tilt + o.tiltVel * dt));
       o.roll = Math.max(-3.14, Math.min(3.14, o.roll + o.rollVel * dt));
-      o.tiltVel *= (1 - 1.6 * dt);
-      o.rollVel *= (1 - 1.6 * dt);
+      o.tiltVel *= (1 - 1.1 * dt);
+      o.rollVel *= (1 - 1.1 * dt);
       if (sub < 0.06) {
         o.tilt *= (1 - 2.2 * dt);
         o.roll *= (1 - 2.2 * dt);
@@ -944,7 +944,7 @@
 
       v[0] *= (1 - 0.9 * dt);
       v[2] *= (1 - 0.9 * dt);
-      if (sub < 0.05) { v[0] *= (1 - 4.0 * dt); v[2] *= (1 - 4.0 * dt); }
+      if (sub < 0.05) { v[0] *= (1 - 2.0 * dt); v[2] *= (1 - 2.0 * dt); }
 
       o.pos[0] += v[0] * dt;
       o.pos[1] += v[1] * dt;

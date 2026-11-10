@@ -540,6 +540,8 @@
   World.defaultObjects = function (key) {
     var L = World.LEVELS[key];
     if (!L) return [];
+    // объекты ставятся по карте высот: на свежей загрузке её ещё нет
+    if (L.cone && !L.terrain) World.buildTerrain(L);
     if (L.city) {
       var city = World.buildCity(L);
       L.tiles = city.tiles;

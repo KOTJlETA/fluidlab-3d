@@ -352,19 +352,40 @@
     var isText = tag === 'textarea' || tag === 'select' ||
       (tag === 'input' && /text|number|search|email|password|url|tel/.test(typ));
     if (isText) return;
-    var kk = e.key.toLowerCase();
+    // раскладка не важна: берём физическую клавишу (e.code), а не символ
+    var kk = keyName(e);
+    if (!kk) return;
     keys[kk] = true;
-    if (kk === ' ') keys['space'] = true;
-    if (kk === 'shift') keys['shift'] = true;
-    if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(kk) >= 0) e.preventDefault();
+    if (kk === 'space') keys[' '] = true;
+    if (kk === 'arrowup' || kk === 'arrowdown' || kk === 'arrowleft' || kk === 'arrowright' || kk === 'space') e.preventDefault();
   });
-  window.addEventListener('keyup', function (e) {
-    var kk = e.key.toLowerCase();
+  function clearKeys() { for (var k in keys) keys[k] = false; }
+  // физическая клавиша -> имя, не зависящее от раскладки (RU/EN и т.п.)
+  function keyName(e) {
+    var c = e.code || '';
+    if (c.indexOf('Key') === 0) return c.slice(3).toLowerCase();
+    if (c.indexOf('Digit') === 0) return c.slice(5);
+    if (c === 'Space') return 'space';
+    if (c === 'ShiftLeft' || c === 'ShiftRight') return 'shift';
+    if (c === 'ArrowUp' || c === 'ArrowDown' || c === 'ArrowLeft' || c === 'ArrowRight') return c.toLowerCase();
+    if (c === 'Escape') return 'escape';
+    var k = String(e.key || '').toLowerCase();
+    if (k === 'shift') return 'shift';
+    if (k === ' ') return 'space';
+    return c ? '' : k;
+  }
+  function onKeyUp(e) {
+    var kk = keyName(e);
+    if (!kk) return;
     keys[kk] = false;
-    if (kk === ' ') keys['space'] = false;
+    if (kk === 'space') { keys['space'] = false; keys[' '] = false; }
     if (kk === 'shift') keys['shift'] = false;
-  });
-  window.addEventListener('blur', function () { keys = Object.create(null); });
+  }
+  window.addEventListener('keyup', onKeyUp, true);
+  document.addEventListener('keyup', onKeyUp, true);
+  window.addEventListener('blur', clearKeys);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) clearKeys(); });
+
 
   function flyCamera(dt) {
     var b = cam.basis();
@@ -379,8 +400,8 @@
     if (keys['s'] || keys['arrowdown']) { mx -= fx; mz -= fz; }
     if (keys['a'] || keys['arrowleft']) { mx -= rx; mz -= rz; }
     if (keys['d'] || keys['arrowright']) { mx += rx; mz += rz; }
-    if (keys['e'] || keys['q'] || keys['space'] || keys['shift']) {
-      var vy = (keys['e'] || keys['space']) ? 1 : -1;
+    if (keys['e'] || keys['q'] || keys['space'] || keys[' '] || keys['shift']) {
+      var vy = (keys['e'] || keys['space'] || keys[' ']) ? 1 : -1;
       my += vy;
     }
     if (mx || my || mz) {
@@ -489,7 +510,9 @@
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
       cam.dist *= Math.exp(e.deltaY * 0.0011);
-      cam.dist = Math.min(12, Math.max(1.3, cam.dist));
+      var Lv = World.LEVELS[App.state.level] || {};
+      var maxD = (Lv.camDist || 12) * 2.4;
+      cam.dist = Math.min(maxD, Math.max(0.8, cam.dist));
     }, { passive: false });
 
     window.addEventListener('keydown', function (e) {
@@ -600,6 +623,10 @@
 
     App.state = FS.Store.load();
     App.mode = App.state.mode || 'nav';
+
+    // карта высот нужна до первого кадра: иначе после F5 остров рисуется плоским
+    var Lpre = World.LEVELS[App.state.level];
+    if (Lpre && Lpre.cone && !Lpre.terrain) World.buildTerrain(Lpre);
 
     renderer = new FS.Renderer(gl, canvas);
     sim = new FS.FluidSim(gl, { count: App.state.count });

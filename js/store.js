@@ -4,7 +4,7 @@
   var FS = (window.FS = window.FS || {});
   var Store = (FS.Store = {});
 
-  Store.KEY = 'fluidlab3d.state.v5';
+  Store.KEY = 'fluidlab3d.state.v6';
 
   Store.defaults = function () {
     return {

@@ -48,6 +48,7 @@
       portal: GL.program(gl, FS.SH.sceneVS, FS.SH.portalFS, 'portal'),
       bld: GL.program(gl, FS.SH.bldVS, FS.SH.bldFS, 'bld'),
       terrain: GL.program(gl, FS.SH.terrainVS, FS.SH.terrainFS, 'terrain'),
+      cloud: GL.program(gl, FS.SH.cloudVS, FS.SH.cloudFS, 'cloud'),
       clear: GL.program(gl, FS.SH.fullscreenVS, FS.SH.clearFS, 'clear')
     };
 
@@ -545,6 +546,12 @@
     this.palmTpl = meshData(pp, np, cp, new Uint16Array(ip));
     this.palm = this._uploadMesh(this.palmTpl);
 
+    // облака: большой горизонтальный квад для реймарча
+    var cq = [], cqn = [], cqc = [], cqi = [];
+    var CS = 260;
+    pushBox(cq, cqn, cqc, cqi, 0, 0, 0, CS, 0.001, CS, [1, 1, 1]);
+    this.cloudQuad = this._uploadMesh(meshData(cq, cqn, cqc, new Uint16Array(cqi)));
+
     // здания: объединённый меш (один draw call на весь город)
     var bp = [], bn = [], bc = [], bi = [];
     pushBox(bp, bn, bc, bi, 0, 0, 0, 1, 1, 1, [1, 1, 1]);
@@ -828,8 +835,8 @@
     GL.u2f(gl, p, 'uRes', W, H);
     GL.u1i(gl, p, 'uMode', Math.max(0, SKY_ORDER.indexOf(state.skybox)));
     GL.u1f(gl, p, 'uTime', this.time);
-    GL.u1f(gl, p, 'uClouds', this.clouds ? 1 : 0);
-    if (this.clouds) {
+    GL.u1f(gl, p, 'uClouds', 0);
+    if (false) {
       var V = cam.view;
       GL.u3f(gl, p, 'uCamPos', cam.eye[0], cam.eye[1], cam.eye[2]);
       GL.u3f(gl, p, 'uCamRight', V[0], V[4], V[8]);
@@ -1140,6 +1147,35 @@
       gl.drawArrays(gl.POINTS, 0, sim.N);
       gl.disable(gl.BLEND);
       gl.disable(gl.DEPTH_TEST);
+    }
+
+    // объёмные облака внутри сцены
+    if (this.clouds) {
+      var pc = this.progs.cloud;
+      gl.useProgram(pc.program);
+      var cy = level.terrain ? 7.2 : 1.30;
+      var thick = level.terrain ? 3.8 : 0.85;
+      // квад — на нижней границе слоя: луч проходит слой целиком
+      var mcl = modelTRS(0, cy - thick, 0, 0, 1, 1, 1);
+      GL.um4(gl, pc, 'uMVP', M.multiply(M.create(), vp, mcl));
+      GL.u3f(gl, pc, 'uCamPos', cam.eye[0], cam.eye[1], cam.eye[2]);
+      GL.u1f(gl, pc, 'uTime', this.time);
+      GL.u1f(gl, pc, 'uCloudY0', cy - thick);
+      GL.u1f(gl, pc, 'uCloudY1', cy);
+      GL.u1f(gl, pc, 'uCloudScale', 0.52 / Math.max(2, level.half));
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(false);
+      gl.bindVertexArray(this.cloudQuad.vao);
+      gl.drawElements(gl.TRIANGLES, this.cloudQuad.count, gl.UNSIGNED_SHORT, 0);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      gl.disable(gl.DEPTH_TEST);
+      p = this.progs.scene;
+      gl.useProgram(p.program);
+      GL.u3fv(gl, p, 'uLightDir', this.lightDir);
+      GL.u3fv(gl, p, 'uCamPos', cam.eye);
     }
 
     // стеклянные стенки

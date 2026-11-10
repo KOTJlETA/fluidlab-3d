@@ -793,6 +793,98 @@ void main() {
   fragColor = vec4(outc, 1.0);
 }`;
 
+  /* ---------- объёмные облака внутри сцены ---------- */
+
+  SH.cloudVS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 aPos;
+uniform mat4 uMVP;
+out vec3 vW;
+void main() {
+  vW = aPos;
+  gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+
+  SH.cloudFS = `#version 300 es
+precision highp float;
+in vec3 vW;
+uniform vec3 uCamPos;
+uniform float uTime;
+uniform float uCloudY0;
+uniform float uCloudY1;
+uniform float uCloudScale;
+out vec4 oOut;
+
+float hash31(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float noise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = hash31(i);
+  float n100 = hash31(i + vec3(1.0, 0.0, 0.0));
+  float n010 = hash31(i + vec3(0.0, 1.0, 0.0));
+  float n110 = hash31(i + vec3(1.0, 1.0, 0.0));
+  float n001 = hash31(i + vec3(0.0, 0.0, 1.0));
+  float n101 = hash31(i + vec3(1.0, 0.0, 1.0));
+  float n011 = hash31(i + vec3(0.0, 1.0, 1.0));
+  float n111 = hash31(i + vec3(1.0, 1.0, 1.0));
+  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+float fbm3(vec3 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 2; i++) { v += a * noise3(p); p *= 2.11; a *= 0.5; }
+  return v * 1.34;
+}
+float density(vec3 p, float t) {
+  vec3 q = vec3(p.x, p.y * 1.9, p.z) * uCloudScale + vec3(t * 0.35, 0.0, t * 0.22);
+  float d = fbm3(q);
+  float th = max(0.25, uCloudY1 - uCloudY0);
+  float vf = smoothstep(uCloudY0, uCloudY0 + 0.28 * th, p.y) *
+             (1.0 - smoothstep(uCloudY1 - 0.38 * th, uCloudY1, p.y));
+  return clamp((d - 0.50) * 3.2, 0.0, 1.0) * vf;
+}
+
+void main() {
+  vec3 rd = vW - uCamPos;
+  float dist = length(rd);
+  if (dist < 1e-3) discard;
+  rd /= dist;
+
+  // отрезок луча внутри слоя
+  float t0 = (uCloudY0 - uCamPos.y) / (abs(rd.y) < 1e-4 ? 1e-4 : rd.y);
+  float t1 = (uCloudY1 - uCamPos.y) / (abs(rd.y) < 1e-4 ? 1e-4 : rd.y);
+  float s0 = max(min(t0, t1), 0.0);
+  float s1 = min(max(t0, t1), dist);
+  if (s1 <= s0) discard;
+
+  const int STEPS = 9;
+  float dt = (s1 - s0) / float(STEPS);
+  float T = 1.0;
+  vec3 acc = vec3(0.0);
+  vec3 L = normalize(vec3(0.45, 0.78, 0.30));
+
+  for (int i = 0; i < STEPS; i++) {
+    vec3 sp = uCamPos + rd * (s0 + dt * (float(i) + 0.5));
+    float d = density(sp, uTime);
+    if (d > 0.004) {
+      float ld = density(sp + L * 2.2, uTime);
+      float lit = clamp(1.0 - ld * 1.6, 0.08, 1.0);
+      vec3 cc = mix(vec3(0.26, 0.30, 0.38), vec3(1.04, 1.01, 0.96), lit);
+      cc = mix(cc, vec3(0.60, 0.68, 0.80), 0.32);
+      float a = clamp(d * 0.16, 0.0, 0.85);
+      acc += cc * a * T;
+      T *= (1.0 - a);
+      if (T < 0.02) break;
+    }
+  }
+  // премультиплицированный альфа-блендинг
+  oOut = vec4(acc, 1.0 - T);
+}`;
+
   /* ---------- рельеф острова ---------- */
 
   SH.terrainVS = `#version 300 es
@@ -1241,16 +1333,20 @@ void main() {
     base = ground * (0.45 + 0.85 * diff);
     base += vec3(0.10, 0.35, 0.45) * gridLine(vW.xz, blk) * 0.05 * fade;
   } else if (uFloorStyle == 5) {
-    /* море вокруг острова */
-    float w1 = sin(vW.x * 0.55 + uTime * 0.7) * cos(vW.z * 0.48 - uTime * 0.5);
-    float w2 = sin(vW.x * 1.7 - uTime * 1.1) * cos(vW.z * 1.5 + uTime * 0.9);
-    vec3 deep = vec3(0.020, 0.075, 0.105);
-    vec3 shallow = vec3(0.045, 0.175, 0.185);
-    float rip = 0.5 + 0.5 * (w1 * 0.6 + w2 * 0.4);
-    vec3 sea = mix(deep, shallow, rip * 0.75);
-    float glint = pow(max(0.0, 1.0 - abs(w2) * 1.4), 8.0);
-    sea += vec3(0.55, 0.72, 0.78) * glint * 0.16;
-    base = sea * (0.75 + 0.35 * diff);
+    /* море вокруг острова: направленные волны без «плитки» */
+    vec2 p2 = vW.xz;
+    float w = sin(dot(p2, vec2(0.83, 0.55)) * 0.75 + uTime * 0.55)
+            + 0.55 * sin(dot(p2, vec2(-0.48, 0.88)) * 1.45 - uTime * 0.85)
+            + 0.30 * sin(dot(p2, vec2(0.96, -0.28)) * 2.60 + uTime * 1.25)
+            + 0.16 * sin(dot(p2, vec2(-0.71, -0.70)) * 4.30 - uTime * 1.75);
+    w *= 0.5;
+    vec3 deep = vec3(0.016, 0.062, 0.090);
+    vec3 shallow = vec3(0.055, 0.185, 0.190);
+    float rip = 0.5 + 0.5 * w;
+    vec3 sea = mix(deep, shallow, clamp(rip, 0.0, 1.0) * 0.8);
+    float glint = pow(max(0.0, 1.0 - abs(w) * 1.6), 10.0);
+    sea += vec3(0.62, 0.78, 0.84) * glint * 0.22;
+    base = sea * (0.80 + 0.30 * diff);
   } else if (uFloorStyle == 4) {
     /* остров: трава, у кромки — песок */
     float r = length(vW.xz);
